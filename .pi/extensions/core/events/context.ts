@@ -14,54 +14,62 @@ import { getState } from './turn';
 
 // ── System instructions (injected once per session) ──
 
-const SYSTEM_INSTRUCTIONS = `
-# Project Overview
+// Static sections — the parts that don't change
+const PROJECT_OVERVIEW_SECTION = `# Project Overview
 
 This is **ILO** — a memory system for coding agents. It remembers entities, their relationships, and past conversations across sessions. Memory is automatic: you don't need to save or load it.
 
 The project has two parts:
 - **mem-arch/** — Rust service that stores and retrieves memory
-- **.pi/extensions/core/** — TypeScript extension that connects pi to the memory service
+- **.pi/extensions/core/** — TypeScript extension that connects pi to the memory service`;
 
-# How Memory Works
+const MEMORY_FORMAT_SECTION = `# How Memory Works
 
 When you receive a block like this, it's your memory from past sessions:
 
   @session [query: your question]
 
   # Focus:
-    EntityName [confidence: 0.95]    ← things that match your question
+    EntityName [confidence: 0.95]    \u2190 things that match your question
 
   # Related:
-    OtherEntity [rel: 0.45]         ← things connected to those matches
+    OtherEntity [rel: 0.45]         \u2190 things connected to those matches
 
 - **# Focus** entities are directly relevant to what you asked
 - **# Related** entities are connected to Focus via past conversations
 - Higher scores (0.0-1.0) mean stronger relevance
 - If memory is empty, the block won't appear
 
-When you mention new information, it's automatically saved as memory for future sessions. You don't need to call a tool for this.
+When you mention new information, it's automatically saved as memory for future sessions. You don't need to call a tool for this.`;
 
-# Your Tools
-
-These tools help you understand and change the project:
-
-- **project_tree** — see the current file structure (always up to date)
-- **git_snapshot** — see current git branch, what's changed, recent commits
-- **git_commit** — stage all changes and commit (message auto-generated from diff)
-- **store** — explicitly save a fact as permanent memory (use when something should be remembered across sessions)
-- **entity_lookup** — look up what's known about a specific entity
-- **connect** — create a relationship between two entities in memory
-
-# How to Work
+const WORKFLOW_SECTION = `# How to Work
 
 1. Before making changes, check git state with \`git_snapshot\`
 2. Use \`project_tree\` when you need to understand file locations
 3. After meaningful progress, commit with \`git_commit\`
-4. If unsure about a file or concept, use \`entity_lookup\` to check memory
-`;
+4. If unsure about a file or concept, use \`entity_lookup\` to check memory`;
 
 let SYSTEM_HINT_INJECTED = false;
+
+/// Dynamically build the tools section from pi's tool registry.
+function buildToolsSection(pi: any): string {
+  try {
+    const allTools = pi.getAllTools?.() || [];
+    if (!allTools.length) return '';
+
+    const lines = ['# Your Tools', ''];
+    for (const tool of allTools) {
+      const name = tool.name || '';
+      const desc = tool.description || tool.promptSnippet || '';
+      if (name && desc) {
+        lines.push('- **' + name + '** - ' + desc);
+      }
+    }
+    return lines.join('\n');
+  } catch {
+    return '';
+  }
+}
 
 
 
@@ -70,13 +78,21 @@ let SYSTEM_HINT_INJECTED = false;
 // ═══════════════════════════════════════════════════════════
 
 export function registerContextHooks(pi: ExtensionAPI): void {
+  // Build system instructions once using live tool registry
+  const systemInstructions = [
+    PROJECT_OVERVIEW_SECTION,
+    MEMORY_FORMAT_SECTION,
+    buildToolsSection(pi),
+    WORKFLOW_SECTION,
+  ].filter(Boolean).join('\n\n');
+
   pi.on('before_agent_start', async (event: any, ctx: any) => {
     const state = getState();
     const userText = state.lastUserText;
 
     // Inject system instructions once per session
     if (!SYSTEM_HINT_INJECTED && ctx.addSystemPrompt) {
-      ctx.addSystemPrompt(SYSTEM_INSTRUCTIONS);
+      ctx.addSystemPrompt(systemInstructions);
       SYSTEM_HINT_INJECTED = true;
     }
 
