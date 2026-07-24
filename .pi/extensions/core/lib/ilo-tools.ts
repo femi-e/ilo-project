@@ -86,13 +86,9 @@ export function registerIloTools(api: ExtensionAPI): void {
       const entity = params.entity || 'general';
       const conf = params.confidence ?? 0.5;
 
-      const ts = Math.floor(Date.now() / 1000);
-      const res = await ilo.remember({
-        query: '',
-        response: content,
+      const res = await ilo.batch({
         entities: [{ label: entity, confidence: conf, tags: [] }],
         claims: [{ content, confidence: conf, provenance: 'user_confirmed', entities: [entity] }],
-        turnIndex: ts,
       });
 
       if (!res.ok) {
@@ -120,11 +116,29 @@ export function registerIloTools(api: ExtensionAPI): void {
       tags: Type.Optional(Type.Array(Type.String(), { description: 'Optional tags for categorization (e.g., ["documentation", "api"])' })),
     }),
     execute: async (_id, params) => {
-      const res = await ilo.ingest(params.content, params.source, params.tags);
-      if (!res.ok) return { content: [{ type: 'text', text: `Ingest failed: ${res.error}` }], details: {} as any };
+      // Extract entities and claims from text via /extract
+      const extractRes = await ilo.extract(params.content);
+      if (!extractRes.ok) return { content: [{ type: 'text', text: `Extraction failed: ${extractRes.error}` }], details: {} as any };
+
+      const extracted = extractRes.data!;
+      const entities = extracted.entities.map((e: any) => ({
+        label: e.name,
+        tags: params.tags || [],
+        confidence: e.confidence,
+      }));
+      const claims = extracted.claims.map((c: any) => ({
+        content: `${c.subject} ${c.link_type} ${c.object}`,
+        confidence: c.confidence,
+        entities: [c.subject, c.object],
+      }));
+
+      // Store via /batch
+      const batchRes = await ilo.batch({ entities, claims });
+      if (!batchRes.ok) return { content: [{ type: 'text', text: `Ingest failed: ${batchRes.error}` }], details: {} as any };
+
       return {
-        content: [{ type: 'text', text: `Ingested ${res.data?.entities_created || 0} entities and ${res.data?.claims_created || 0} claims from ${params.source}.` }],
-        details: res.data || {},
+        content: [{ type: 'text', text: `Ingested ${extracted.n_entities} entities and ${extracted.n_claims} claims from ${params.source}.` }],
+        details: { entities_created: extracted.n_entities, claims_created: extracted.n_claims },
       };
     },
   });
@@ -137,7 +151,7 @@ export function registerIloTools(api: ExtensionAPI): void {
   api.registerTool({
     name: 'entity_lookup',
     label: 'Entity Lookup',
-    description: 'Look up a single entity by name and return its full details: ID, confidence, tags, and properties. Use when you need structured data about one specific entity rather than a search across many.',
+    description: 'Look up a single entity by name and return its full details: ID, confidence, tags, properties, and related links. Use when you need structured data about one specific entity rather than a search across many.',
     promptSnippet: 'Look up full details on a single entity by name',
     promptGuidelines: [
       'Use entity_lookup when you need the full structured details (tags, properties, confidence) of a single specific entity.',
@@ -148,12 +162,14 @@ export function registerIloTools(api: ExtensionAPI): void {
       name: Type.String({ description: 'The exact entity name to look up (case-insensitive)' }),
     }),
     execute: async (_id, params) => {
-      const res = await ilo.entityLookup(params.name);
+      const res = await ilo.lookup(params.name);
       if (!res.ok) return { content: [{ type: 'text', text: `Lookup failed: ${res.error}` }], details: {} as any };
-      if (!res.data?.found) return { content: [{ type: 'text', text: `Entity "${params.name}" not found in memory.` }], details: {} as any };
+      if (res.data?.error) return { content: [{ type: 'text', text: `Entity "${params.name}" not found in memory.` }], details: {} as any };
+      const d = res.data;
+      const linkSummary = (d.links || []).slice(0, 10).map((l: any) => `${l.type} ${l.from !== d.id ? l.from : l.to}`).join(', ');
       return {
-        content: [{ type: 'text', text: `Found: ${res.data.name}\nConfidence: ${res.data.confidence}\nTags: ${(res.data.tags || []).join(', ') || '(none)'}\nProperties: ${JSON.stringify(res.data.properties || {})}` }],
-        details: res.data,
+        content: [{ type: 'text', text: `Found: ${d.label}\nID: ${d.id}\nType: ${d.type}\nConfidence: ${d.confidence}\nTags: ${(d.tags || []).join(', ') || '(none)'}\nProperties: ${JSON.stringify(d.properties || {})}\nLinks (${(d.links || []).length}): ${linkSummary || 'none'}` }],
+        details: { id: d.id, name: d.label, confidence: d.confidence, tags: d.tags, properties: d.properties, links: d.links },
       };
     },
   });
@@ -166,18 +182,18 @@ export function registerIloTools(api: ExtensionAPI): void {
     promptSnippet: 'Link two entities with a relationship in the knowledge graph',
     promptGuidelines: [
       'Use entity_connect to create a relationship link between two entities in the knowledge graph.',
-      'Choose the link_type that best describes the relationship: ref (reference/association), dep (dependency), con (contradiction), or evidence (supporting evidence).',
+      'Choose the link_type that best describes the relationship: relates, depends, contradicts, refutes, contains, supports, mentions, precedes.',
       'Both entities should already exist in memory (created via memory_store or memory_ingest). Create them first if needed.',
     ],
     parameters: Type.Object({
       from: Type.String({ description: 'Source entity label' }),
       to: Type.String({ description: 'Target entity label' }),
-      link_type: Type.Optional(Type.String({ description: 'Link type: ref (reference), dep (dependency), con (contradiction), evidence (supporting evidence). Default: ref' })),
+      link_type: Type.Optional(Type.String({ description: 'Link type: relates (reference), depends (dependency), contradicts, refutes, contains, supports, mentions, precedes. Default: relates' })),
     }),
     execute: async (_id, params) => {
-      const res = await ilo.connect(params.from, params.to, params.link_type || 'ref');
+      const res = await ilo.createLink(params.from, params.to, params.link_type || 'relates', 0.5);
       if (!res.ok) return { content: [{ type: 'text', text: `Connect failed: ${res.error}` }], details: {} as any };
-      return { content: [{ type: 'text', text: `Linked ${params.from} → ${params.to} (${params.link_type || 'ref'}).` }], details: res.data || {} };
+      return { content: [{ type: 'text', text: `Linked ${params.from} → ${params.to} (${params.link_type || 'relates'}).` }], details: res.data || {} };
     },
   });
 
@@ -199,11 +215,21 @@ export function registerIloTools(api: ExtensionAPI): void {
       confidence: Type.Optional(Type.Number({ description: 'New confidence level 0.0 to 1.0' })),
     }),
     execute: async (_id, params) => {
-      const res = await ilo.entityUpdate(params.name, params.properties, params.tags);
+      // Resolve label to ID via lookup, then PATCH
+      const lookup = await ilo.lookup(params.name);
+      if (!lookup.ok || lookup.data?.error) {
+        return { content: [{ type: 'text', text: `Entity "${params.name}" not found.` }], details: {} as any };
+      }
+      const id = lookup.data.id;
+      const res = await ilo.updateEntity(id, {
+        tags: params.tags,
+        confidence: params.confidence,
+        properties: params.properties,
+      });
       if (!res.ok) {
         return { content: [{ type: 'text', text: `Update failed: ${res.error}` }], details: {} as any };
       }
-      return { content: [{ type: 'text', text: `Updated entity "${params.name}". Created: ${res.data?.created}` }], details: res.data || {} };
+      return { content: [{ type: 'text', text: `Updated entity "${params.name}".` }], details: { id, status: 'ok' } };
     },
   });
 
@@ -224,7 +250,12 @@ export function registerIloTools(api: ExtensionAPI): void {
     }),
     execute: async (_id, params) => {
       const entity = params.entity || 'general';
-      const res = await ilo.entityUpdate(entity, { forgotten: true });
+      // Resolve label to ID, then PATCH with forgotten property
+      const lookup = await ilo.lookup(entity);
+      if (!lookup.ok || lookup.data?.error) {
+        return { content: [{ type: 'text', text: `Entity "${entity}" not found.` }], details: {} as any };
+      }
+      const res = await ilo.updateEntity(lookup.data.id, { properties: { forgotten: true } });
       if (!res.ok) {
         return { content: [{ type: 'text', text: `Forget failed: ${res.error}` }], details: {} as any };
       }
