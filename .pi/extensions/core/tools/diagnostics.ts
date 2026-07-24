@@ -28,8 +28,8 @@ export function registerDiagnosticsTool(api: ExtensionAPI): void {
         lines.push(`Sidecar:     error — ${status.error || 'unreachable'}`);
       }
 
-      // Search index health (via debug endpoint)
-      const debug = await ilo.requestRaw<{ tag_index_keys: string[] }>('GET', '/debug');
+      // Search index health via debug endpoint
+      const debug = await ilo.debug();
       if (debug.ok && debug.data) {
         const tags = debug.data.tag_index_keys || [];
         lines.push(`Tags:        ${tags.length} unique (${tags.slice(0, 8).join(', ')}${tags.length > 8 ? ', ...' : ''})`);

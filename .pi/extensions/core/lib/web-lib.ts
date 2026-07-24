@@ -58,6 +58,19 @@ async function ensureSearXng(): Promise<void> {
   } catch { /* podman not installed */ }
 }
 
+// ── Shared helpers ─────────────────────────────────────
+
+const UA = 'Mozilla/5.0 (compatible; ILO/1.0)';
+
+async function httpFetch(url: string, timeout = 15000): Promise<string> {
+  const res = await fetch(url, {
+    signal: AbortSignal.timeout(timeout),
+    headers: { 'User-Agent': UA },
+  });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return res.text();
+}
+
 // ── 2. Page fetch (HTTP + Readability) ──────────────────
 
 export async function fetchPage(url: string): Promise<FetchedPage> {
@@ -66,13 +79,7 @@ export async function fetchPage(url: string): Promise<FetchedPage> {
     validatedUrl = 'https://' + validatedUrl;
   }
 
-  const res = await fetch(validatedUrl, {
-    signal: AbortSignal.timeout(15000),
-    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ILO/1.0)' },
-  });
-  if (!res.ok) throw new Error('HTTP ' + res.status + ': ' + res.statusText);
-
-  const html = await res.text();
+  const html = await httpFetch(validatedUrl, 15000);
   const doc = new JSDOM(html, { url: validatedUrl });
   const reader = new Readability(doc.window.document);
   const article = reader.parse();
@@ -122,10 +129,8 @@ export async function crawlSite(seedUrl: string, depth: number = 1, limit: numbe
 }
 
 async function fetchRaw(url: string): Promise<string> {
-  try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(10000), headers: { 'User-Agent': 'Mozilla/5.0' } });
-    return res.ok ? res.text() : '';
-  } catch { return ''; }
+  try { return await httpFetch(url, 10000); }
+  catch { return ''; }
 }
 
 function extractLinks(html: string, baseUrl: string, domain: string): string[] {

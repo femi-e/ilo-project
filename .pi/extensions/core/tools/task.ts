@@ -62,17 +62,8 @@ async function createTask(params: any) {
   if (params.priority) properties.priority = params.priority;
   if (params.description) properties.description = params.description;
 
-  // Create task as an entity
-  await ilo.entityUpdate(title, properties);
-  // Also need to set tags — entityUpdate sets properties, but we need tags on the node
-  // Use store to create with proper tags
-  await ilo.remember({
-    query: 'task:' + title,
-    response: '',
-    entities: [{ label: title, tags, confidence: 0.9 }],
-    claims: [],
-    turnIndex: Date.now(),
-  }).catch(() => {});
+  // Create task as an entity with task tag and properties
+  await ilo.entityUpdate(title, properties, tags);
 
   // Link to parent via connect
   if (params.parent) {
@@ -108,12 +99,6 @@ async function updateTask(params: any) {
 }
 
 async function listTasks() {
-  const res = await ilo.search('', true);
-  // The search results include context — try to extract task info from the formatted block
-  if (res.ok && res.data?.context) {
-    return { content: [{ type: 'text', text: res.data.context }], details: { total: res.data.total } };
-  }
-  // Fallback: try searching specifically for tasks
   const taskRes = await ilo.search('tasks', true);
   if (taskRes.ok && taskRes.data?.context) {
     return { content: [{ type: 'text', text: taskRes.data.context }], details: { total: taskRes.data.total } };

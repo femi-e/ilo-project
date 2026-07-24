@@ -7,8 +7,12 @@
 
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
-import { execSync } from 'node:child_process';
+import { exec } from 'node:child_process';
+import { promisify } from 'node:util';
 import { ilo } from './ilo-client';
+
+const asyncExec = promisify(exec);
+const GIT_TIMEOUT = 10000;
 
 export function registerIloTools(api: ExtensionAPI): void {
   // ── search: Search memory ───────────────────────────
@@ -121,12 +125,11 @@ export function registerIloTools(api: ExtensionAPI): void {
       const depth = params.depth ?? 3;
       try {
         const root = process.cwd();
-        const tree = execSync(`find . -maxdepth ${depth} -not -path '*/target/*' -not -path '*/node_modules/*' -not -path '*/.git/*' -not -path '*/rust-projects/*' | sort`, {
-          cwd: root,
-          encoding: 'utf-8',
-          timeout: 5000,
-        });
-        return { content: [{ type: 'text', text: tree }], details: { depth } };
+        const { stdout } = await asyncExec(
+          `find . -maxdepth ${depth} -not -path '*/target/*' -not -path '*/node_modules/*' -not -path '*/.git/*' -not -path '*/rust-projects/*' | sort`,
+          { cwd: root, timeout: 5000 }
+        );
+        return { content: [{ type: 'text', text: stdout }], details: { depth } };
       } catch (err: any) {
         return { content: [{ type: 'text', text: `Failed to get tree: ${err.message}` }], details: {} };
       }
@@ -142,10 +145,14 @@ export function registerIloTools(api: ExtensionAPI): void {
     execute: async (_id, _params) => {
       try {
         const root = process.cwd();
-        const opts = { cwd: root, encoding: 'utf-8' as const, timeout: 5000 };
-        const branch = execSync('git branch --show-current 2>/dev/null || echo "(no branch)"', opts).trim();
-        const status = execSync('git status --short 2>/dev/null || echo "(not a git repo)"', opts).trim();
-        const log = execSync('git log --oneline -5 2>/dev/null || echo "(no commits)"', opts).trim();
+        const [branchRes, statusRes, logRes] = await Promise.all([
+          asyncExec('git branch --show-current 2>/dev/null || echo "(no branch)"', { cwd: root, timeout: 5000 }),
+          asyncExec('git status --short 2>/dev/null || echo "(not a git repo)"', { cwd: root, timeout: 5000 }),
+          asyncExec('git log --oneline -5 2>/dev/null || echo "(no commits)"', { cwd: root, timeout: 5000 }),
+        ]);
+        const branch = branchRes.stdout.trim();
+        const status = statusRes.stdout.trim();
+        const log = logRes.stdout.trim();
 
         const lines = [
           `Branch: ${branch}`,
@@ -174,21 +181,20 @@ export function registerIloTools(api: ExtensionAPI): void {
     execute: async (_id, params) => {
       try {
         const root = process.cwd();
-        const opts = { cwd: root, encoding: 'utf-8' as const, timeout: 10000 };
 
         // Stage all
-        execSync('git add -A', opts);
+        await asyncExec('git add -A', { cwd: root, timeout: GIT_TIMEOUT });
 
         // Check if anything to commit
-        const hasChanges = execSync('git diff --cached --stat 2>/dev/null', opts).trim();
-        if (!hasChanges) {
+        const { stdout: hasChanges } = await asyncExec('git diff --cached --stat 2>/dev/null', { cwd: root, timeout: 5000 });
+        if (!hasChanges.trim()) {
           return { content: [{ type: 'text', text: 'Nothing to commit — working tree clean.' }], details: {} };
         }
 
         // Generate message from diff if not provided
         let message = params.message;
         if (!message) {
-          const diff = execSync('git diff --cached --no-color | head -100', opts);
+          const { stdout: diff } = await asyncExec('git diff --cached --no-color | head -100', { cwd: root, timeout: 5000 });
           const files = hasChanges.split('\n').map(l => l.trim()).filter(Boolean);
           const firstFile = files[0]?.split('|')[0]?.trim() || '';
           const fileCount = files.length;
@@ -196,8 +202,8 @@ export function registerIloTools(api: ExtensionAPI): void {
         }
 
         // Commit
-        execSync(`git commit -m "${message.replace(/"/g, '\\"')}"`, opts);
-        const sha = execSync('git rev-parse --short HEAD', opts).trim();
+        await asyncExec(`git commit -m "${message.replace(/"/g, '\\"')}"`, { cwd: root, timeout: GIT_TIMEOUT });
+        const { stdout: sha } = await asyncExec('git rev-parse --short HEAD', { cwd: root, timeout: 5000 });
 
         return {
           content: [{ type: 'text', text: `Committed ${sha}: ${message}` }],

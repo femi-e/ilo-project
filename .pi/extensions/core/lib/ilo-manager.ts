@@ -5,7 +5,7 @@
 // Designed to run as part of the pi extension's session_start.
 // ============================================================================
 
-import { spawn, execSync, ChildProcess } from 'node:child_process';
+import { spawn, ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { ilo } from './ilo-client';
@@ -59,22 +59,16 @@ export async function startIlo(): Promise<boolean> {
     stopIlo();
   }
 
-  // Kill any stale mem-arch processes holding DB locks
+  // Kill any stale ILO processes using PID file
+  const pidFile = path.join(EXT_VAR_DIR, 'ilo.pid');
   try {
-    execSync('pkill -9 -f "mem-arch" 2>/dev/null || true');
-    // Wait for ALL mem-arch processes to die (kernel must release flock)
-    for (let i = 0; i < 20; i++) {
-      try {
-        execSync('pgrep -f "mem-arch" 2>/dev/null', { stdio: 'ignore' });
-        await new Promise((r) => setTimeout(r, 200));
-      } catch {
-        break; // no more matching processes
-      }
-    }
+    const oldPid = parseInt(fs.readFileSync(pidFile, 'utf-8'), 10);
+    try { process.kill(oldPid, 'SIGTERM'); } catch {}
+    await new Promise((r) => setTimeout(r, 1000));
   } catch {}
 
   // Remove stale socket
-  try { execSync(`rm -f ${ILO_SOCKET}`); } catch {}
+  try { fs.unlinkSync(ILO_SOCKET); } catch {}
 
   // Ensure var/ directory exists
   const varDir = path.dirname(ILO_DB_PATH);
@@ -100,9 +94,13 @@ export async function startIlo(): Promise<boolean> {
   proc.stdout?.on('data', (d) => process.stdout.write(`[ilo] ${d}`));
   proc.stderr?.on('data', (d) => process.stderr.write(`[ilo] ${d}`));
 
+  // Write PID file
+  try { fs.writeFileSync(pidFile, String(proc.pid)); } catch {}
+
   proc.on('exit', (code) => {
     console.error(`[ilo] process exited with code ${code}`);
     state.process = null;
+    try { fs.unlinkSync(pidFile); } catch {}
     // Auto-restart if under limit
     if (state.restartCount < MAX_RESTARTS) {
       state.restartCount++;

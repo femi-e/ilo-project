@@ -17,7 +17,23 @@ import { EXT_VAR_DIR } from './constants';
 const ILO_SOCKET = process.env.ILO_SOCKET || path.join(EXT_VAR_DIR, 'ilo.sock');
 const ILO_TIMEOUT = parseInt(process.env.ILO_TIMEOUT || '5000', 10);
 
-interface IloResponse<T = any> {
+// ── Shared types ────────────────────────────────────────
+
+export interface EntityInput {
+  label: string;
+  tags?: string[];
+  confidence?: number;
+  properties?: Record<string, unknown>;
+}
+
+export interface ClaimInput {
+  content: string;
+  confidence?: number;
+  provenance?: string;
+  entities?: string[];
+}
+
+interface IloResponse<T = unknown> {
   ok: boolean;
   data?: T;
   error?: string;
@@ -82,7 +98,7 @@ class IloClient {
 
   /** Extract entities and claims from raw text. */
   async extract(text: string) {
-    return this.request<{ text: string; entities: any[]; claims: any[]; n_entities: number; n_claims: number }>(
+    return this.request<{ text: string; entities: EntityInput[]; claims: ClaimInput[]; n_entities: number; n_claims: number }>(
       'POST', '/extract', { text }
     );
   }
@@ -104,8 +120,8 @@ class IloClient {
   async remember(params: {
     query: string;
     response: string;
-    entities: any[];
-    claims: any[];
+    entities: EntityInput[];
+    claims: ClaimInput[];
     turnIndex: number;
   }) {
     return this.request('POST', '/remember', {
@@ -143,9 +159,9 @@ class IloClient {
 
   // ── LLM-invokable tools ────────────────────────────
 
-  /** Raw request — for tools that need direct endpoint access. */
-  async requestRaw<T>(method: 'GET' | 'POST', path: string, body?: any) {
-    return this.request<T>(method, path, body);
+  /** Debug — get internal tag index state. */
+  async debug() {
+    return this.request<{ tag_index_keys: string[] }>('GET', '/debug');
   }
 
   /** Search memory. Use list=true for flat results without graph expansion. */
@@ -169,9 +185,9 @@ class IloClient {
     return this.request('POST', '/connect', { from, to, link_type: linkType });
   }
 
-  /** Update an entity's properties. */
-  async entityUpdate(name: string, properties: Record<string, any>) {
-    return this.request('POST', '/entity/update', { name, properties });
+  /** Update an entity's properties and tags. */
+  async entityUpdate(name: string, properties: Record<string, unknown>, tags?: string[]) {
+    return this.request('POST', '/entity/update', { name, properties, tags });
   }
 }
 
