@@ -105,7 +105,8 @@ export function registerIloTools(api: ExtensionAPI): void {
     }),
     execute: async (_id, params) => {
       const res = await ilo.connect(params.from, params.to, params.link_type || 'ref');
-      return { content: [{ type: 'text', text: `Linked ${params.from} → ${params.to}.` }], details: res.data || {} };
+      if (!res.ok) return { content: [{ type: 'text', text: `Connect failed: ${res.error}` }], details: {} as any };
+      return { content: [{ type: 'text', text: `Linked ${params.from} → ${params.to} (${params.link_type || 'ref'}).` }], details: res.data || {} };
     },
   });
 
