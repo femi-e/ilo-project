@@ -1,0 +1,51 @@
+[package]
+name = "ilo"
+version = "0.1.0"
+edition = "2021"
+description = "ILO: Cognitive memory runtime for coding agents — persistent graph memory with FTS/vector retrieval, PPR graph traversal, Hebbian learning, and Candle embeddings"
+
+[lib]
+name = "mem_arch"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ilo"
+path = "src/main.rs"
+
+[dependencies]
+# HTTP server
+axum = { version = "0.8", features = ["json", "macros"] }
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.5", features = ["cors"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Database
+lbug = "0.18.3"
+
+# UUID generation
+uuid = { version = "1", features = ["v7", "fast-rng"] }
+
+# Errors
+thiserror = "2"
+
+
+# Async
+futures = "0.3"
+async-trait = "0.1"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# ML (embeddings via Candle)
+candle-core = { git = "https://github.com/huggingface/candle", features = ["metal"] }
+candle-nn = { git = "https://github.com/huggingface/candle" }
+candle-transformers = { git = "https://github.com/huggingface/candle" }
+hf-hub = "0.4"
+tokenizers = "0.21"
