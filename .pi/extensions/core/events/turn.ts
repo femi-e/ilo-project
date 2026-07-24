@@ -7,6 +7,7 @@
 //   3. Stores the turn with entities and claims via ILO
 // ============================================================================
 
+import * as crypto from 'node:crypto';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { ilo } from '../lib/ilo-client';
 

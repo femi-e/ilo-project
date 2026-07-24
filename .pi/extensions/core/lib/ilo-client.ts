@@ -11,8 +11,10 @@
 // ============================================================================
 
 import * as net from 'node:net';
+import * as path from 'node:path';
+import { EXT_VAR_DIR } from './constants';
 
-const ILO_SOCKET = process.env.ILO_SOCKET || '/tmp/ilo.sock';
+const ILO_SOCKET = process.env.ILO_SOCKET || path.join(EXT_VAR_DIR, 'ilo.sock');
 const ILO_TIMEOUT = parseInt(process.env.ILO_TIMEOUT || '10000', 10);
 
 interface IloResponse<T = any> {

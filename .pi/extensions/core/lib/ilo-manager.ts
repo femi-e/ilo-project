@@ -52,9 +52,9 @@ export async function startIlo(): Promise<boolean> {
     stopIlo();
   }
 
-  // Kill any stale mem-arch processes holding DB locks
-  try { execSync('pkill -f "mem-arch" 2>/dev/null || true'); } catch {}
-  await new Promise((r) => setTimeout(r, 1000));
+  // Kill any stale mem-arch processes holding DB locks (SIGKILL to be sure)
+  try { execSync('pkill -9 -f "mem-arch" 2>/dev/null || true'); } catch {}
+  await new Promise((r) => setTimeout(r, 1500));
 
   // Ensure var/ directory exists
   const varDir = path.dirname(ILO_DB_PATH);
@@ -89,9 +89,9 @@ export async function startIlo(): Promise<boolean> {
     }
   });
 
-  // Wait for health check
-  for (let i = 0; i < 20; i++) {
-    await new Promise((r) => setTimeout(r, 500));
+  // Wait for health check — poll faster (200ms interval, 5s max)
+  for (let i = 0; i < 25; i++) {
+    await new Promise((r) => setTimeout(r, 200));
     try {
       const res = await ilo.status();
       if (res.ok) {
