@@ -7,7 +7,6 @@
 //   3. Stores the turn with entities and claims via ILO
 // ============================================================================
 
-import * as crypto from 'node:crypto';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { ilo } from '../lib/ilo-client';
 
@@ -18,14 +17,13 @@ const STATE_KEY = '__ailo_ilo_turn_state__';
 interface TurnState {
   lastUserText: string;
   turnCount: number;
-  sessionId: string;
   healthy: boolean;
 }
 
 export function getState(): TurnState {
   let state = (globalThis as any)[STATE_KEY];
   if (!state) {
-    state = { lastUserText: '', turnCount: 0, sessionId: 'default', healthy: false };
+    state = { lastUserText: '', turnCount: 0, healthy: false };
     (globalThis as any)[STATE_KEY] = state;
   }
   return state;
@@ -44,7 +42,6 @@ export function registerTurnHooks(pi: ExtensionAPI): void {
   pi.on('session_start', async (_event: any, ctx: any) => {
     const state = getState();
     state.turnCount = 0;
-    state.sessionId = crypto.randomUUID?.() || Date.now().toString(36);
 
     // Show ILO startup status
     const healthy = await ilo.status().then(r => r.ok && r.data?.status === 'ok').catch(() => false);
@@ -93,7 +90,6 @@ export function registerTurnHooks(pi: ExtensionAPI): void {
         response: responseText,
         entities: extract.data?.entities || [],
         claims: extract.data?.claims || [],
-        sessionId: state.sessionId,
         turnIndex: state.turnCount++,
       }).catch(() => {});
 

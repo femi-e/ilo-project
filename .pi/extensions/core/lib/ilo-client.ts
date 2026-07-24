@@ -100,22 +100,27 @@ class IloClient {
     });
   }
 
-  /** Store a turn with entities, claims, and response. */
+  /** Store a conversation turn with entities, claims, and response. */
   async remember(params: {
     query: string;
     response: string;
     entities: any[];
     claims: any[];
-    sessionId: string;
     turnIndex: number;
   }) {
     return this.request('POST', '/remember', {
-      session_id: params.sessionId,
       turn_index: params.turnIndex,
       query: params.query,
       response: params.response,
       entities: params.entities,
       claims: params.claims,
+    });
+  }
+
+  /** Ingest external content as entities + claims without creating a Turn. */
+  async ingest(content: string, source: string, tags?: string[]) {
+    return this.request<{ status: string; entities_created: number; claims_created: number }>('POST', '/ingest', {
+      content, source, tags,
     });
   }
 

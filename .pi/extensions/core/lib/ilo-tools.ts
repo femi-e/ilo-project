@@ -50,11 +50,30 @@ export function registerIloTools(api: ExtensionAPI): void {
         response: content,
         entities: [{ label: entity, confidence: conf, tags: [] }],
         claims: [{ content, confidence: conf, provenance: 'user_confirmed', entities: [entity] }],
-        sessionId: 'tool_store',
         turnIndex: Date.now(),
       });
 
       return { content: [{ type: 'text', text: `Stored belief about ${entity}.` }], details: { entity, confidence: conf } };
+    },
+  });
+
+  // ── ingest: Ingest external content ─────────────────
+  api.registerTool({
+    name: 'ingest',
+    label: 'Ingest',
+    description: 'Save external content (web articles, files, notes) into memory as entities and claims. The content is extracted and linked to the knowledge graph without creating a conversation turn.',
+    parameters: Type.Object({
+      content: Type.String({ description: 'The full text content to ingest' }),
+      source: Type.String({ description: 'A label identifying the source (URL, filename, or description)' }),
+      tags: Type.Optional(Type.Array(Type.String(), { description: 'Optional tags for categorization' })),
+    }),
+    execute: async (_id, params) => {
+      const res = await ilo.ingest(params.content, params.source, params.tags);
+      if (!res.ok) return { content: [{ type: 'text', text: `Ingest failed: ${res.error}` }], details: {} };
+      return {
+        content: [{ type: 'text', text: `Ingested ${res.data?.entities_created || 0} entities and ${res.data?.claims_created || 0} claims from ${params.source}.` }],
+        details: res.data || {},
+      };
     },
   });
 
