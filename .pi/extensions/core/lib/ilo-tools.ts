@@ -205,7 +205,7 @@ export function registerIloTools(api: ExtensionAPI): void {
     promptSnippet: 'Update an entity\'s properties, tags, or confidence',
     promptGuidelines: [
       'Use entity_update to modify an existing entity\'s properties (like status, priority) or add/change tags.',
-      'To remove/forget an entity entirely, use entity_forget instead.',
+      'To mark an entity as forgotten, set properties: { forgotten: true } via entity_update.',
       'Always check if the entity exists first with entity_lookup before updating.',
     ],
     parameters: Type.Object({
@@ -233,35 +233,6 @@ export function registerIloTools(api: ExtensionAPI): void {
     },
   });
 
-  // ── entity_forget: Forget an entity ───────────────────
-  api.registerTool({
-    name: 'entity_forget',
-    label: 'Entity Forget',
-    description: 'Mark an entity as forgotten/deprecated in the knowledge graph. The entity and its claims are preserved but flagged so they no longer appear in normal memory_search results.',
-    promptSnippet: 'Deprecate or remove a stored entity from active memory',
-    promptGuidelines: [
-      'Use entity_forget when the user wants to delete, remove, or correct a previously stored fact or entity.',
-      'This marks the entity as forgotten rather than deleting it, so the information is preserved but excluded from normal searches.',
-      'To just update an entity\'s properties instead, use entity_update.',
-    ],
-    parameters: Type.Object({
-      content: Type.String({ description: 'The fact or claim text to deprecate' }),
-      entity: Type.Optional(Type.String({ description: 'Entity label the claim is about (default: "general")' })),
-    }),
-    execute: async (_id, params) => {
-      const entity = params.entity || 'general';
-      // Resolve label to ID, then PATCH with forgotten property
-      const lookup = await ilo.lookup(entity);
-      if (!lookup.ok || lookup.data?.error) {
-        return { content: [{ type: 'text', text: `Entity "${entity}" not found.` }], details: {} as any };
-      }
-      const res = await ilo.updateEntity(lookup.data.id, { properties: { forgotten: true } });
-      if (!res.ok) {
-        return { content: [{ type: 'text', text: `Forget failed: ${res.error}` }], details: {} as any };
-      }
-      return { content: [{ type: 'text', text: `Marked entity "${entity}" as forgotten.` }], details: { entity } };
-    },
-  });
 
   // ═══════════════════════════════════════════════════════════════
   // WEB TOOLS — internet access

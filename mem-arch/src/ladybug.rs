@@ -118,7 +118,24 @@ impl LadybugStore {
                         created_at: chrono::Utc::now().naive_utc(),
                     });
                 },
-                _ => {},
+                StoreMutation::SetProperty { .. } => {
+                    // Properties not cached — fetched from DB on demand
+                },
+                StoreMutation::DeleteProperty { .. } => {
+                    // Properties not cached — no-op
+                },
+                StoreMutation::DeleteLink { id } => {
+                    lc.remove(id);
+                },
+                StoreMutation::DeleteNode { id } => {
+                    // Remove from node cache
+                    nc.remove(id);
+                    // Remove from tag index (search all tag entries for this ID)
+                    ti.retain(|_, ids| {
+                        ids.retain(|nid| nid != id);
+                        !ids.is_empty()
+                    });
+                },
             }
         }
     }
