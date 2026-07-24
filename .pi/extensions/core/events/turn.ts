@@ -10,7 +10,6 @@
 import * as crypto from 'node:crypto';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { ilo } from '../lib/ilo-client';
-import { isIloHealthy } from '../lib/ilo-manager';
 
 // ── In-memory state (survives /reload) ────────────────
 
@@ -48,7 +47,7 @@ export function registerTurnHooks(pi: ExtensionAPI): void {
     state.sessionId = crypto.randomUUID?.() || Date.now().toString(36);
 
     // Show ILO startup status
-    const healthy = await isIloHealthy();
+    const healthy = await ilo.status().then(r => r.ok && r.data?.status === 'ok').catch(() => false);
     state.healthy = healthy;
     if (healthy && ctx?.ui) {
       ctx.ui.setStatus('ilo', ctx.ui.theme.fg('success', '● ILO'));

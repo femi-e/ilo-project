@@ -35,7 +35,6 @@ const ILO_SOCKET = process.env.ILO_SOCKET || path.join(EXT_VAR_DIR, 'ilo.sock');
 const ILO_DB_PATH = process.env.ILO_DB_PATH || path.join(EXT_VAR_DIR, 'ilo_data.lbug');
 const ILO_MAX_UPTIME = process.env.ILO_MAX_UPTIME || '45';
 const MAX_RESTARTS = 3;
-const HEALTH_CHECK_INTERVAL = 5000; // ms
 
 // ── API ───────────────────────────────────────────────
 
@@ -124,7 +123,7 @@ export async function startIlo(): Promise<boolean> {
     } catch {}
   }
 
-  console.error('[ilo] failed to start within 10 seconds');
+  console.error('[ilo] failed to start within 3 seconds');
   return false;
 }
 

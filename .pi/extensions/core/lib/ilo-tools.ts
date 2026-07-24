@@ -8,7 +8,6 @@
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { execSync } from 'node:child_process';
-import * as path from 'node:path';
 import { ilo } from './ilo-client';
 
 export function registerIloTools(api: ExtensionAPI): void {
