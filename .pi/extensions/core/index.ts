@@ -17,6 +17,7 @@ import { registerWebSearchTool } from './tools/web-search';
 import { registerWebScrapeTool } from './tools/web-scrape';
 import { registerWebCrawlTool } from './tools/web-crawl';
 import { registerTaskTool } from './tools/task';
+import { registerDiagnosticsTool } from './tools/diagnostics';
 
 export default async function (pi: ExtensionAPI): Promise<void> {
   // ── Register interaction loop hooks ────────────────
@@ -30,6 +31,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   registerWebScrapeTool(pi);
   registerWebCrawlTool(pi);
   registerTaskTool(pi);
+  registerDiagnosticsTool(pi);
 
   // ── Start ILO sidecar ──────────────────────────────
   const started = await startIlo();

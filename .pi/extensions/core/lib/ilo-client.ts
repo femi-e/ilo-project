@@ -143,6 +143,11 @@ class IloClient {
 
   // ── LLM-invokable tools ────────────────────────────
 
+  /** Raw request — for tools that need direct endpoint access. */
+  async requestRaw<T>(method: 'GET' | 'POST', path: string, body?: any) {
+    return this.request<T>(method, path, body);
+  }
+
   /** Search memory. Use list=true for flat results without graph expansion. */
   async search(query: string, list?: boolean, tag?: string) {
     return this.request<{ context: string; nodes: any; total: number }>('POST', '/search', {
