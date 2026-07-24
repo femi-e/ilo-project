@@ -15,7 +15,7 @@ import * as path from 'node:path';
 import { EXT_VAR_DIR } from './constants';
 
 const ILO_SOCKET = process.env.ILO_SOCKET || path.join(EXT_VAR_DIR, 'ilo.sock');
-const ILO_TIMEOUT = parseInt(process.env.ILO_TIMEOUT || '10000', 10);
+const ILO_TIMEOUT = parseInt(process.env.ILO_TIMEOUT || '5000', 10);
 
 interface IloResponse<T = any> {
   ok: boolean;
@@ -39,6 +39,7 @@ class IloClient {
         `${method} ${path} HTTP/1.1`,
         'Host: localhost',
         'Content-Type: application/json',
+        'Connection: close',
         `Content-Length: ${payload.length}`,
         '',
         payload,
