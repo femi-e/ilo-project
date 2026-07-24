@@ -10,6 +10,7 @@
 
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { ilo } from '../lib/ilo-client';
+import { ensureIlo } from '../lib/ilo-manager';
 import { getState } from './turn';
 
 // ── System instructions (injected once per session) ──
@@ -98,6 +99,13 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 
     // Skip retrieval for very short inputs
     if (!userText || userText.length < 10) return;
+
+    // Ensure sidecar is alive before making API calls
+    const healthy = await ensureIlo();
+    if (!healthy) {
+      console.error('[ilo-context] sidecar unavailable, skipping memory retrieval');
+      return;
+    }
 
     try {
       // Step 1: Extract entities from the prompt

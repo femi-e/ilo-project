@@ -148,6 +148,31 @@ export async function isIloHealthy(): Promise<boolean> {
   }
 }
 
+/**
+ * Ensure the ILO sidecar is running and responsive.
+ * Call before any ILO API operation from event hooks.
+ * Returns true if healthy, false if sidecar couldn't be started.
+ */
+export async function ensureIlo(): Promise<boolean> {
+  const state = getState();
+
+  // Fast path: already have a running process and it responds
+  if (state.process) {
+    const healthy = await isIloHealthy();
+    if (healthy) return true;
+    // Process is dead — clean up the stale reference
+    console.error('[ilo] process died, restarting...');
+    state.process = null;
+  } else {
+    // No process reference — check if socket responds (e.g., started externally)
+    const healthy = await isIloHealthy();
+    if (healthy) return true;
+  }
+
+  // Try to restart
+  return startIlo();
+}
+
 /** Restart ILO. */
 export async function restartIlo(): Promise<boolean> {
   stopIlo();

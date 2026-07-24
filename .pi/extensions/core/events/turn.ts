@@ -9,6 +9,7 @@
 
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { ilo } from '../lib/ilo-client';
+import { ensureIlo } from '../lib/ilo-manager';
 
 // ── In-memory state (survives /reload) ────────────────
 
@@ -43,8 +44,8 @@ export function registerTurnHooks(pi: ExtensionAPI): void {
     const state = getState();
     state.turnCount = 0;
 
-    // Show ILO startup status
-    const healthy = await ilo.status().then(r => r.ok && r.data?.status === 'ok').catch(() => false);
+    // Show ILO startup status — ensureIlo handles restart if needed
+    const healthy = await ensureIlo();
     state.healthy = healthy;
     if (healthy && ctx?.ui) {
       ctx.ui.setStatus('ilo', ctx.ui.theme.fg('success', '● ILO'));
@@ -62,6 +63,13 @@ export function registerTurnHooks(pi: ExtensionAPI): void {
     const responseText = turn?.response || turn?.text || '';
 
     if (!userText && !responseText) return;
+
+    // Ensure sidecar is alive before storing this turn
+    const healthy = await ensureIlo();
+    if (!healthy) {
+      console.error('[ilo-turn] sidecar unavailable, skipping memory storage');
+      return;
+    }
 
     try {
       // Step 1: Extract entities and claims from the full turn
