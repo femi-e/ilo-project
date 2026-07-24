@@ -11,6 +11,23 @@ import { execSync } from 'node:child_process';
 import { ilo } from './ilo-client';
 
 export function registerIloTools(api: ExtensionAPI): void {
+  // ── search: Search memory ───────────────────────────
+  api.registerTool({
+    name: 'search',
+    label: 'Search',
+    description: 'Search memory for entities by query, tag, or type. Returns a context block with matching entities and their relationships.',
+    parameters: Type.Object({
+      query: Type.String({ description: 'What to search for' }),
+      flat: Type.Optional(Type.Boolean({ description: 'If true, skip graph expansion — just list matches' })),
+    }),
+    execute: async (_id, params) => {
+      const res = await ilo.search(params.query, params.flat);
+      if (!res.ok) return { content: [{ type: 'text', text: `Search failed: ${res.error}` }], details: {} };
+      if (!res.data?.context) return { content: [{ type: 'text', text: 'No results found.' }], details: {} };
+      return { content: [{ type: 'text', text: res.data.context }], details: { total: res.data.total } };
+    },
+  });
+
   // ── store: Store a belief about an entity ──────────
   api.registerTool({
     name: 'store',
