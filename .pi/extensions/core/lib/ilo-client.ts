@@ -33,6 +33,37 @@ export interface ClaimInput {
   entities?: string[];
 }
 
+// ── Rust response types (must match Rust structs) ────────
+
+/** Matches Rust ExtractedEntity. */
+export interface ExtractedEntity {
+  name: string;
+  start: number;
+  end: number;
+  confidence: number;
+  in_graph: boolean;
+  graph_id: string | null;
+  tags: string[];
+}
+
+/** Matches Rust ExtractedClaim. */
+export interface ExtractedClaim {
+  subject: string;
+  link_type: string;
+  object: string;
+  confidence: number;
+}
+
+/** Matches Rust SearchedNode. */
+export interface SearchedNode {
+  id: string;
+  label: string;
+  node_type: string;
+  confidence: number;
+  relevance: number;
+  tags: string[];
+}
+
 interface IloResponse<T = unknown> {
   ok: boolean;
   data?: T;
@@ -98,7 +129,7 @@ class IloClient {
 
   /** Extract entities and claims from raw text. */
   async extract(text: string) {
-    return this.request<{ text: string; entities: EntityInput[]; claims: ClaimInput[]; n_entities: number; n_claims: number }>(
+    return this.request<{ text: string; entities: ExtractedEntity[]; claims: ExtractedClaim[]; n_entities: number; n_claims: number }>(
       'POST', '/extract', { text }
     );
   }
@@ -124,7 +155,7 @@ class IloClient {
     claims: ClaimInput[];
     turnIndex: number;
   }) {
-    return this.request('POST', '/remember', {
+    return this.request<{ status: string; turn_id: string; phase: string; entities_created: number }>('POST', '/remember', {
       turn_index: params.turnIndex,
       query: params.query,
       response: params.response,
@@ -166,7 +197,7 @@ class IloClient {
 
   /** Search memory. Use list=true for flat results without graph expansion. */
   async search(query: string, list?: boolean, tag?: string) {
-    return this.request<{ context: string; nodes: any; total: number }>('POST', '/search', {
+    return this.request<{ context: string; nodes: SearchedNode[] | null; total: number }>('POST', '/search', {
       query,
       max_hops: list ? 0 : undefined,
       tag,
@@ -175,19 +206,19 @@ class IloClient {
 
   /** Look up an entity by name. */
   async entityLookup(name: string) {
-    return this.request<{ found: boolean; id?: string; name?: string; confidence?: number; tags?: string[]; properties?: any }>(
+    return this.request<{ found: boolean; id?: string; name?: string; confidence?: number; tags?: string[]; properties?: Record<string, unknown> }>(
       'POST', '/entity/lookup', { name }
     );
   }
 
   /** Create a link between two entities. */
   async connect(from: string, to: string, linkType: string) {
-    return this.request('POST', '/connect', { from, to, link_type: linkType });
+    return this.request<{ status: string; link_id: string; entities_affected: string[] }>('POST', '/connect', { from, to, link_type: linkType });
   }
 
   /** Update an entity's properties and tags. */
   async entityUpdate(name: string, properties: Record<string, unknown>, tags?: string[]) {
-    return this.request('POST', '/entity/update', { name, properties, tags });
+    return this.request<{ status: string; created: boolean; entities_affected: string[] }>('POST', '/entity/update', { name, properties, tags });
   }
 }
 

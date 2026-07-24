@@ -84,12 +84,22 @@ export function registerTurnHooks(pi: ExtensionAPI): void {
         }).catch(() => {});
       }
 
-      // Step 3: Store the turn
+      // Step 3: Convert extract output to remember input and store
+      const entitiesIn = (extract.data?.entities || []).map(e => ({
+        label: e.name,
+        tags: e.tags,
+        confidence: e.confidence,
+      }));
+      const claimsIn = (extract.data?.claims || []).map(c => ({
+        content: `${c.subject} ${c.link_type} ${c.object}`,
+        confidence: c.confidence,
+        entities: [c.subject, c.object],
+      }));
       await ilo.remember({
         query: userText,
         response: responseText,
-        entities: extract.data?.entities || [],
-        claims: extract.data?.claims || [],
+        entities: entitiesIn,
+        claims: claimsIn,
         turnIndex: state.turnCount++,
       }).catch(() => {});
 
