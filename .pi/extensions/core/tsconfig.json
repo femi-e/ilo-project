@@ -5,17 +5,9 @@
     "moduleResolution": "bundler",
     "esModuleInterop": true,
     "strict": true,
-    "ignoreDeprecations": "6.0",
     "skipLibCheck": true,
-    "outDir": "dist",
-    "types": ["node"],
-    "paths": {
-      "@earendil-works/pi-coding-agent": [
-        "/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts"
-      ]
-    },
-    "baseUrl": "."
+    "types": ["node"]
   },
   "include": [".pi/extensions/core/**/*.ts"],
-  "exclude": ["node_modules", "tests", "dist"]
+  "exclude": ["node_modules"]
 }
