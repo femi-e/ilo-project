@@ -12,31 +12,7 @@ import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { ilo } from '../lib/ilo-client';
 import { getState } from './turn';
 
-// ── Processor injection rules (kept from original) ────
 
-const UNIVERSAL_RULES_CUSTOM_TYPE = 'ailo-core';
-const RULES_VERSION = 1;
-
-const UNIVERSAL_RULES_TEXT = [
-  '### Ailo — Core Behavior Rules',
-  '',
-  '- I have persistent long-term memory across sessions via a LadybugDB knowledge base.',
-  '- I cite sources when making claims from stored beliefs.',
-  '- I respect confidence labels: >0.80 = fact, 0.60-0.80 = likely, <0.60 = possible, <0.40 = not injected.',
-  '- I never run destructive commands (rm -rf, DROP TABLE, etc.) without user confirmation.',
-  '- I adapt my behavior based on what the user asks me to do — coding, teaching, planning, etc.',
-  '',
-  '---',
-].join('\n');
-
-function hasRulesMessage(sessionManager: any): boolean {
-  try {
-    const entries = sessionManager.getBranch();
-    return entries.some((e: any) => e.type === 'custom' && e.customType === UNIVERSAL_RULES_CUSTOM_TYPE);
-  } catch {
-    return false;
-  }
-}
 
 // ═══════════════════════════════════════════════════════════
 // Handler registration
@@ -46,15 +22,6 @@ export function registerContextHooks(pi: ExtensionAPI): void {
   pi.on('before_agent_start', async (event: any, ctx: any) => {
     const state = getState();
     const userText = state.lastUserText;
-
-    // Tier 1: Universal rules (injected once per session if sessionManager is available)
-    if (ctx.sessionManager && !hasRulesMessage(ctx.sessionManager)) {
-      ctx.sessionManager.addMessage({
-        type: 'custom',
-        customType: UNIVERSAL_RULES_CUSTOM_TYPE,
-        content: UNIVERSAL_RULES_TEXT,
-      });
-    }
 
     // Skip retrieval for very short inputs
     if (!userText || userText.length < 10) return;
