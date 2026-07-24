@@ -47,8 +47,8 @@ export function registerContextHooks(pi: ExtensionAPI): void {
     const state = getState();
     const userText = state.lastUserText;
 
-    // Tier 1: Universal rules (injected once per session)
-    if (!hasRulesMessage(ctx.sessionManager)) {
+    // Tier 1: Universal rules (injected once per session if sessionManager is available)
+    if (ctx.sessionManager && !hasRulesMessage(ctx.sessionManager)) {
       ctx.sessionManager.addMessage({
         type: 'custom',
         customType: UNIVERSAL_RULES_CUSTOM_TYPE,
