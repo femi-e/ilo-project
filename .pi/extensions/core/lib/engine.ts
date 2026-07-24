@@ -1,16 +1,13 @@
 // ============================================================================
-// lib/engine.ts — Singleton accessor for the database and session state
+// lib/engine.ts — Minimal engine singleton (ILO-powered)
 // ============================================================================
-// Provides a global getter that survives Pi /reload.
-// Phase 2b modules (context.ts, turn.ts, etc.) import this to access the DB.
+// Previously managed direct LadybugDB access. Now ILO handles all DB operations.
+// This file provides only the session ID and a flag to check if ILO is available.
 // ============================================================================
-
-import type { DbLayer } from './db';
 
 const ENGINE_KEY = '__ailo_engine__';
 
 export interface EngineState {
-  db: DbLayer;
   sessionId: string;
 }
 
@@ -22,10 +19,9 @@ export function getEngineState(): EngineState | null {
   return (globalThis as any)[ENGINE_KEY] ?? null;
 }
 
-export function getDb(): DbLayer {
-  const state = getEngineState();
-  if (!state?.db) throw new Error('[engine] Database not available');
-  return state.db;
+/** @deprecated Use ILO directly — this always returns null. */
+export function getDb(): null {
+  return null;
 }
 
 export function getSessionId(): string {

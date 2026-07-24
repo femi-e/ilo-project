@@ -5,7 +5,7 @@
 // Designed to run as part of the pi extension's session_start.
 // ============================================================================
 
-import { spawn, ChildProcess } from 'node:child_process';
+import { spawn, execSync, ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { ilo } from './ilo-client';
@@ -30,7 +30,7 @@ function getState(): IloManagerState {
 
 // ── Config ────────────────────────────────────────────
 
-const ILO_BINARY = process.env.ILO_BINARY || path.join(EXT_VAR_DIR, '..', 'mem-arch', 'target', 'debug', 'mem-arch');
+const ILO_BINARY = process.env.ILO_BINARY || path.join(EXT_VAR_DIR, '..', 'mem-arch', 'target', 'release', 'mem-arch');
 const ILO_SOCKET = process.env.ILO_SOCKET || path.join(EXT_VAR_DIR, 'ilo.sock');
 const ILO_DB_PATH = process.env.ILO_DB_PATH || path.join(EXT_VAR_DIR, 'ilo_data.lbug');
 const ILO_MAX_UPTIME = process.env.ILO_MAX_UPTIME || '45';
@@ -51,6 +51,10 @@ export async function startIlo(): Promise<boolean> {
     // Dead process — clean up
     stopIlo();
   }
+
+  // Kill any stale mem-arch processes holding DB locks
+  try { execSync('pkill -f "mem-arch" 2>/dev/null || true'); } catch {}
+  await new Promise((r) => setTimeout(r, 1000));
 
   // Ensure var/ directory exists
   const varDir = path.dirname(ILO_DB_PATH);
