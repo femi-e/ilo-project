@@ -17,11 +17,12 @@ export function registerIloTools(api: ExtensionAPI): void {
     label: 'Search',
     description: 'Search memory for entities by query, tag, or type. Returns a context block with matching entities and their relationships.',
     parameters: Type.Object({
-      query: Type.String({ description: 'What to search for' }),
-      flat: Type.Optional(Type.Boolean({ description: 'If true, skip graph expansion — just list matches' })),
+      query: Type.String({ description: 'What to search for — describe what you need in natural language' }),
+      list: Type.Optional(Type.Boolean({ description: 'Set to true for a flat list of matches without showing relationships. Use when you want a catalogue ("list all tasks"). Default: false (shows connections between entities).' })),
+      tag: Type.Optional(Type.String({ description: 'Filter by tag — narrow results to a specific category like "project", "task", or "person"' })),
     }),
     execute: async (_id, params) => {
-      const res = await ilo.search(params.query, params.flat);
+      const res = await ilo.search(params.query, params.list, params.tag);
       if (!res.ok) return { content: [{ type: 'text', text: `Search failed: ${res.error}` }], details: {} };
       if (!res.data?.context) return { content: [{ type: 'text', text: 'No results found.' }], details: {} };
       return { content: [{ type: 'text', text: res.data.context }], details: { total: res.data.total } };
@@ -54,18 +55,6 @@ export function registerIloTools(api: ExtensionAPI): void {
       });
 
       return { content: [{ type: 'text', text: `Stored belief about ${entity}.` }], details: { entity, confidence: conf } };
-    },
-  });
-
-  // ── entity_lookup: Look up a known entity ──────────
-  api.registerTool({
-    name: 'entity_lookup',
-    label: 'Entity Lookup',
-    description: 'Look up a known entity in the knowledge graph.',
-    parameters: Type.Object({ name: Type.String({ description: 'Entity name to look up' }) }),
-    execute: async (_id, params) => {
-      const res = await ilo.entityLookup(params.name);
-      return { content: [{ type: 'text', text: JSON.stringify(res.data) }], details: res.data || {} };
     },
   });
 

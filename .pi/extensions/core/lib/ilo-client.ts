@@ -138,11 +138,12 @@ class IloClient {
 
   // ── LLM-invokable tools ────────────────────────────
 
-  /** Search memory. Set flat=true to skip graph expansion (list mode). */
-  async search(query: string, flat?: boolean) {
-    return this.request<{ context: string; nodes: any[]; total: number }>('POST', '/search', {
+  /** Search memory. Use list=true for flat results without graph expansion. */
+  async search(query: string, list?: boolean, tag?: string) {
+    return this.request<{ context: string; nodes: any; total: number }>('POST', '/search', {
       query,
-      max_hops: flat ? 0 : undefined,
+      max_hops: list ? 0 : undefined,
+      tag,
     });
   }
 
