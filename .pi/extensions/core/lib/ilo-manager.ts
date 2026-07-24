@@ -42,6 +42,14 @@ const HEALTH_CHECK_INTERVAL = 5000; // ms
 /** Start the ILO sidecar if not already running. */
 export async function startIlo(): Promise<boolean> {
   const state = getState();
+
+  // Verify binary exists
+  if (!fs.existsSync(ILO_BINARY)) {
+    console.error(`[ilo] binary not found at ${ILO_BINARY}`);
+    console.error('[ilo] run: cd mem-arch && cargo build --release');
+    return false;
+  }
+
   if (state.process) {
     // Check if it's still alive
     try {
@@ -104,9 +112,9 @@ export async function startIlo(): Promise<boolean> {
     }
   });
 
-  // Wait for health check — poll faster (200ms interval, 5s max)
-  for (let i = 0; i < 25; i++) {
-    await new Promise((r) => setTimeout(r, 200));
+  // Wait for health check — poll fast (100ms interval, 3s max)
+  for (let i = 0; i < 30; i++) {
+    await new Promise((r) => setTimeout(r, 100));
     try {
       const res = await ilo.status();
       if (res.ok) {
