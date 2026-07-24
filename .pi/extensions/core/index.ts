@@ -13,6 +13,9 @@ import { registerTurnHooks } from './events/turn';
 import { registerInputHooks } from './events/input';
 import { startIlo, stopIlo } from './lib/ilo-manager';
 import { registerIloTools } from './lib/ilo-tools';
+import { registerWebSearchTool } from './tools/web-search';
+import { registerWebScrapeTool } from './tools/web-scrape';
+import { registerWebCrawlTool } from './tools/web-crawl';
 
 export default async function (pi: ExtensionAPI): Promise<void> {
   // ── Register interaction loop hooks ────────────────
@@ -22,6 +25,9 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
   // ── Register ILO tools for the LLM ─────────────────
   registerIloTools(pi);
+  registerWebSearchTool(pi);
+  registerWebScrapeTool(pi);
+  registerWebCrawlTool(pi);
 
   // ── Start ILO sidecar ──────────────────────────────
   const started = await startIlo();

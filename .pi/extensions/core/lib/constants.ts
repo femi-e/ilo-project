@@ -22,3 +22,10 @@ export const EXT_SRC_DIR = path.resolve(
 
 /** Runtime data directory (ilo/var/). */
 export const EXT_VAR_DIR = path.join(EXTENSION_DIR, 'var');
+
+/** SearXNG metasearch port (Docker/Podman: 18089 → 8080). */
+export const SEARXNG_PORT = 18089;
+
+/** Max search results to return. */
+export const SEARXNG_DEFAULT_LIMIT = 5;
+export const SEARXNG_MAX_LIMIT = 20;
