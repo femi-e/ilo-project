@@ -84,7 +84,7 @@ async fn test_5000_links_batch() {
             id: format!("l_{}", i),
             from: format!("e_{}", from),
             to: format!("e_{}", to),
-            type_: LinkType::Ref,
+            type_: LinkType::Relates,
             tags: vec![],
             weight: 0.5,
         });
@@ -122,7 +122,7 @@ async fn test_ppr_on_dense_graph() {
             mutations.push(StoreMutation::CreateLink {
                 id: format!("l_{}_{}", i, j),
                 from: format!("e_{}", i), to: format!("e_{}", j),
-                type_: LinkType::Ref, tags: vec![], weight,
+                type_: LinkType::Relates, tags: vec![], weight,
             });
             count += 1;
         }
@@ -216,7 +216,7 @@ async fn test_100_turn_session() {
                 id: format!("ctx_{}", i),
                 from: turn_id.clone(),
                 to: format!("e_session_{}", i),
-                type_: LinkType::Context,
+                type_: LinkType::Mentions,
                 tags: vec![],
                 weight: 0.5,
             });
@@ -228,7 +228,7 @@ async fn test_100_turn_session() {
                 id: format!("seq_{}", i),
                 from: prev.clone(),
                 to: turn_id.clone(),
-                type_: LinkType::Seq,
+                type_: LinkType::Precedes,
                 tags: vec![],
                 weight: 0.9,
             });
@@ -262,7 +262,7 @@ async fn test_100_turn_session() {
 
     // Verify temporal links
     let seq_links = store.get_all_links().await.unwrap();
-    let seq_count = seq_links.iter().filter(|l| l.type_ == LinkType::Seq).count();
+    let seq_count = seq_links.iter().filter(|l| l.type_ == LinkType::Precedes).count();
     assert_eq!(seq_count, 99, "99 seq links between 100 turns");
 }
 
@@ -291,7 +291,7 @@ async fn test_learning_200_turns() {
             mutations.push(StoreMutation::CreateLink {
                 id: format!("l_{}_{}", i, j),
                 from: entity_ids[i].clone(), to: entity_ids[j].clone(),
-                type_: LinkType::Ref, tags: vec![], weight: 0.3,
+                type_: LinkType::Relates, tags: vec![], weight: 0.3,
             });
         }
     }

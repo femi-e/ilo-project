@@ -55,7 +55,7 @@ async fn test_self_referential_link() {
     apply(&mut store, vec![
         StoreMutation::CreateNode { id: "e_a".into(), type_: NodeType::Entity, tags: vec![], label: "A".into(), confidence: 0.9 },
         StoreMutation::CreateLink { id: "l_self".into(), from: "e_a".into(), to: "e_a".into(),
-            type_: LinkType::Ref, tags: vec![], weight: 0.8 },
+            type_: LinkType::Relates, tags: vec![], weight: 0.8 },
     ]).await;
 
     // Traverse from A — should not infinite loop
@@ -74,9 +74,9 @@ async fn test_circular_graph_three_nodes() {
         ]).await;
     }
     apply(&mut store, vec![
-        StoreMutation::CreateLink { id: "l_ab".into(), from: "e_a".into(), to: "e_b".into(), type_: LinkType::Ref, tags: vec![], weight: 0.9 },
-        StoreMutation::CreateLink { id: "l_bc".into(), from: "e_b".into(), to: "e_c".into(), type_: LinkType::Ref, tags: vec![], weight: 0.9 },
-        StoreMutation::CreateLink { id: "l_ca".into(), from: "e_c".into(), to: "e_a".into(), type_: LinkType::Ref, tags: vec![], weight: 0.9 },
+        StoreMutation::CreateLink { id: "l_ab".into(), from: "e_a".into(), to: "e_b".into(), type_: LinkType::Relates, tags: vec![], weight: 0.9 },
+        StoreMutation::CreateLink { id: "l_bc".into(), from: "e_b".into(), to: "e_c".into(), type_: LinkType::Relates, tags: vec![], weight: 0.9 },
+        StoreMutation::CreateLink { id: "l_ca".into(), from: "e_c".into(), to: "e_a".into(), type_: LinkType::Relates, tags: vec![], weight: 0.9 },
     ]).await;
 
     // Traverse with max_depth=10 — should terminate
@@ -102,7 +102,7 @@ async fn test_fan_out_explosion() {
         });
         mutations.push(StoreMutation::CreateLink {
             id: format!("l_hub_{}", i), from: "e_hub".into(), to: target,
-            type_: LinkType::Ref, tags: vec![], weight: 0.1,
+            type_: LinkType::Relates, tags: vec![], weight: 0.1,
         });
     }
     apply(&mut store, mutations).await;

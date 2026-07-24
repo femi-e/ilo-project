@@ -22,17 +22,36 @@ impl std::str::FromStr for NodeType {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum LinkType {
-    Has, Ref, Dep, Con, Seq, Evidence, Context, Refute,
+    Relates, Depends, Contradicts, Refutes, Contains, Supports, Mentions, Precedes,
 }
 impl LinkType {
     pub fn as_str(&self) -> &'static str {
-        match self { LinkType::Has => "has", LinkType::Ref => "ref", LinkType::Dep => "dep", LinkType::Con => "con", LinkType::Seq => "seq", LinkType::Evidence => "evidence", LinkType::Context => "context", LinkType::Refute => "refute" }
+        match self {
+            LinkType::Relates => "relates",
+            LinkType::Depends => "depends",
+            LinkType::Contradicts => "contradicts",
+            LinkType::Refutes => "refutes",
+            LinkType::Contains => "contains",
+            LinkType::Supports => "supports",
+            LinkType::Mentions => "mentions",
+            LinkType::Precedes => "precedes",
+        }
     }
 }
 impl std::str::FromStr for LinkType {
     type Err = ();
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s { "has" => Ok(LinkType::Has), "ref" => Ok(LinkType::Ref), "dep" => Ok(LinkType::Dep), "con" => Ok(LinkType::Con), "seq" => Ok(LinkType::Seq), "evidence" => Ok(LinkType::Evidence), "context" => Ok(LinkType::Context), "refute" => Ok(LinkType::Refute), _ => Err(()) }
+        match s {
+            "relates" => Ok(LinkType::Relates),
+            "depends" => Ok(LinkType::Depends),
+            "contradicts" => Ok(LinkType::Contradicts),
+            "refutes" => Ok(LinkType::Refutes),
+            "contains" => Ok(LinkType::Contains),
+            "supports" => Ok(LinkType::Supports),
+            "mentions" => Ok(LinkType::Mentions),
+            "precedes" => Ok(LinkType::Precedes),
+            _ => Err(()),
+        }
     }
 }
 
@@ -202,8 +221,9 @@ mod tests {
 
     #[test]
     fn test_link_type_roundtrip() {
-        for variant in &[LinkType::Has, LinkType::Ref, LinkType::Dep, LinkType::Con,
-                         LinkType::Seq, LinkType::Evidence, LinkType::Context, LinkType::Refute] {
+        for variant in &[LinkType::Relates, LinkType::Depends, LinkType::Contradicts,
+                         LinkType::Refutes, LinkType::Contains, LinkType::Supports,
+                         LinkType::Mentions, LinkType::Precedes] {
             let s = variant.as_str();
             let back: Result<LinkType, _> = s.parse();
             assert_eq!(back, Ok(variant.clone()), "roundtrip failed for {variant:?}");

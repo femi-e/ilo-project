@@ -80,7 +80,7 @@ pub async fn remember(
                         let ctx = uid("ctx");
                         all_mutations.push(StoreMutation::CreateLink {
                             id: ctx, from: turn_id.clone(), to: eid,
-                            type_: LinkType::Context, tags: vec![], weight: 0.5,
+                            type_: LinkType::Mentions, tags: vec![], weight: 0.5,
                         });
                     }
                 }
@@ -92,7 +92,7 @@ pub async fn remember(
             let ctx_link_id = uid("ctx");
             all_mutations.push(StoreMutation::CreateLink {
                 id: ctx_link_id, from: turn_id.clone(), to: eid.clone(),
-                type_: LinkType::Context, tags: vec![], weight: 0.5,
+                type_: LinkType::Mentions, tags: vec![], weight: 0.5,
             });
         }
     }
@@ -203,7 +203,7 @@ pub async fn ingest_handler(
     for cid in &claim_ids {
         mutations.push(StoreMutation::CreateLink {
             id: uid("l"), from: source_id.clone(), to: cid.clone(),
-            type_: LinkType::Evidence, tags: vec![], weight: 0.7,
+            type_: LinkType::Supports, tags: vec![], weight: 0.7,
         });
     }
 
@@ -308,9 +308,14 @@ pub async fn connect(
     }
     let link_id = uid("l");
     let lt = match req.link_type.as_str() {
-        "dep" => LinkType::Dep, "con" => LinkType::Con,
-        "evidence" => LinkType::Evidence, "refute" => LinkType::Refute,
-        _ => LinkType::Ref,
+        "depends" => LinkType::Depends,
+        "contradicts" => LinkType::Contradicts,
+        "refutes" => LinkType::Refutes,
+        "supports" => LinkType::Supports,
+        "mentions" => LinkType::Mentions,
+        "contains" => LinkType::Contains,
+        "precedes" => LinkType::Precedes,
+        _ => LinkType::Relates,
     };
     mutations.push(StoreMutation::CreateLink {
         id: link_id.clone(), from: from_id, to: to_id, type_: lt, tags: vec![], weight: req.confidence.unwrap_or(0.5),

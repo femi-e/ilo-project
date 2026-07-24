@@ -63,7 +63,7 @@ fn build_graph(store: &mut LadybugStore) -> HashMap<String, String> {
             id: link_id,
             from: from.to_string(),
             to: to.to_string(),
-            type_: LinkType::Ref,
+            type_: LinkType::Relates,
             tags: vec![],
             weight: 0.3,
         });

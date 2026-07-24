@@ -299,7 +299,7 @@ fn row_to_link(row: &[Value]) -> Option<LinkRecord> {
     if let Value::String(id)=&row[0]{if let Value::String(frm)=&row[1]{if let Value::String(to)=&row[2]{if let Value::String(typ)=&row[3]{
         let w=match &row[4]{Value::Double(d)=>*d,_=>0.0};
         let created_at = ts_from_value(&row[5]);
-        Some(LinkRecord{id:id.clone(),from:frm.clone(),to:to.clone(),type_:typ.parse::<LinkType>().unwrap_or(LinkType::Ref),tags:vec![],weight:w,created_at})
+        Some(LinkRecord{id:id.clone(),from:frm.clone(),to:to.clone(),type_:typ.parse::<LinkType>().unwrap_or(LinkType::Relates),tags:vec![],weight:w,created_at})
     }else{None}}else{None}}else{None}}else{None}
 }
 
@@ -437,7 +437,7 @@ impl Store for LadybugStore {
                 if let Some(row) = prev.next() {
                     if let Value::String(prev_id) = &row[0] {
                         let seq_id = uid("seq");
-                        exec_params(&c, "MATCH (a:Node {id: $prev}), (b:Node {id: $next}) CREATE (a)-[:LINK {id: $lid, type: 'seq', weight: 0.9}]->(b)", vec![
+                        exec_params(&c, "MATCH (a:Node {id: $prev}), (b:Node {id: $next}) CREATE (a)-[:LINK {id: $lid, type: 'precedes', weight: 0.9}]->(b)", vec![
                             ("prev", Value::String(prev_id.clone())),
                             ("next", Value::String(tid.clone())),
                             ("lid", Value::String(seq_id)),
