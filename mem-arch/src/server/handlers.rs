@@ -329,12 +329,13 @@ pub async fn connect(
 pub async fn entity_update(
     Extension(state): Extension<Arc<AppState>>,
     Json(req): Json<EntityUpdateReq>,
-) -> Json<EntityUpdateResp> {
+) -> impl IntoResponse {
+    let name = req.label.as_deref().unwrap_or("unknown");
     let (eid, was_created) = {
         let store = state.store.read().await;
-        match resolve_entity(&store, &req.name).await {
+        match resolve_entity(&store, name).await {
             Some(id) => (id, false),
-            None => (format!("e_{}", req.name.to_lowercase().replace(' ', "_")), true),
+            None => (format!("e_{}", name.to_lowercase().replace(' ', "_")), true),
         }
     };
     let mut mutations = Vec::new();
@@ -342,16 +343,18 @@ pub async fn entity_update(
     if was_created {
         mutations.push(StoreMutation::CreateNode {
             id: eid.clone(), type_: NodeType::Entity, tags: tags.clone(),
-            label: req.name.clone(), confidence: req.confidence.unwrap_or(0.3),
+            label: name.to_string(), confidence: req.confidence.unwrap_or(0.3),
         });
     }
-    for (k, v) in &req.properties {
-        mutations.push(StoreMutation::SetProperty {
-            owner_id: eid.clone(), owner_kind: OwnerKind::Node, key: k.clone(), value: json_to_propvalue(v),
-        });
+    if let Some(props) = &req.properties {
+        for (k, v) in props {
+            mutations.push(StoreMutation::SetProperty {
+                owner_id: eid.clone(), owner_kind: OwnerKind::Node, key: k.clone(), value: json_to_propvalue(v),
+            });
+        }
     }
     { let mut s = state.store.write().await; let _ = s.write_maintenance(mutations).await; }
-    Json(EntityUpdateResp { status: "ok".into(), created: was_created, entities_affected: vec![req.name.to_lowercase()] })
+    (StatusCode::OK, Json(serde_json::json!({"status": "ok", "created": was_created, "entities_affected": vec![name.to_lowercase()]}))).into_response()
 }
 
 // ─── /extract ────────────────────────────────────────────

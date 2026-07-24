@@ -1,6 +1,6 @@
 //! Server setup: route registration, socket binding, graceful shutdown.
 
-use axum::{Router, routing::{get, post}, Extension};
+use axum::{Router, routing::{get, post, patch, delete}, Extension};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::net::UnixListener;
@@ -9,6 +9,7 @@ use tokio::signal;
 use mem_arch::store::Store;
 use super::AppState;
 use super::handlers;
+use super::crud;
 
 /// Uptime tracker — set when the server starts.
 pub static START_TIME: std::sync::LazyLock<Instant> = std::sync::LazyLock::new(Instant::now);
@@ -26,7 +27,8 @@ pub async fn run_server(store: mem_arch::ladybug::LadybugStore, socket_path: &st
     });
 
     let app = Router::new()
-        .route("/status", get(handlers::status))
+        // Existing endpoints (keep unchanged)
+        .route("/status", get(crud::status))
         .route("/remember", post(handlers::remember))
         .route("/recall", post(handlers::recall))
         .route("/learn", post(handlers::learn))
@@ -38,6 +40,20 @@ pub async fn run_server(store: mem_arch::ladybug::LadybugStore, socket_path: &st
         .route("/connect", post(handlers::connect))
         .route("/entity/update", post(handlers::entity_update))
         .route("/debug", get(handlers::debug_state))
+        // New REST CRUD endpoints
+        .route("/entities", post(crud::create_entities))
+        .route("/entities/search", post(crud::search_entities))
+        .route("/entities/{id}", get(crud::get_entity))
+        .route("/entities/{id}", patch(crud::update_entity))
+        .route("/entities/{id}", delete(crud::delete_entity))
+        .route("/claims", post(crud::create_claims))
+        .route("/claims/{id}", get(crud::get_claim))
+        .route("/claims/{id}", patch(crud::update_claim))
+        .route("/claims/{id}", delete(crud::delete_claim))
+        .route("/links", post(crud::create_link))
+        .route("/links/{id}", patch(crud::update_link))
+        .route("/links/{id}", delete(crud::delete_link))
+        .route("/batch", post(crud::batch))
         .layer(Extension(state));
 
     let listener = match UnixListener::bind(socket_path) {

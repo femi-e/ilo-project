@@ -9,6 +9,7 @@
 mod types;
 mod helpers;
 mod handlers;
+mod crud;
 mod router;
 
 // Public API — used by main.rs

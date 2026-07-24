@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-// ─── Request types ──────────────────────────────────────────
+// ─── Existing request types ────────────────────────────────
 
 #[derive(Deserialize)]
 pub struct RememberReq {
@@ -27,22 +27,6 @@ pub struct IngestReq {
     pub tags: Option<Vec<String>>,
     pub entities: Option<Vec<EntityInput>>,
     pub claims: Option<Vec<ClaimInput>>,
-}
-
-#[derive(Deserialize)]
-pub struct EntityInput {
-    pub label: String,
-    pub tags: Option<Vec<String>>,
-    pub confidence: Option<f64>,
-    pub properties: Option<serde_json::Map<String, serde_json::Value>>,
-}
-
-#[derive(Deserialize)]
-pub struct ClaimInput {
-    pub content: String,
-    pub confidence: Option<f64>,
-    pub provenance: Option<String>,
-    pub entities: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -93,15 +77,75 @@ pub struct SearchReq {
     pub query_embedding: Option<Vec<f32>>,
 }
 
+// ─── New REST CRUD request types ───────────────────────────
+
 #[derive(Deserialize)]
-pub struct EntityUpdateReq {
-    pub name: String,
-    pub properties: serde_json::Map<String, serde_json::Value>,
-    pub confidence: Option<f64>,
-    pub tags: Option<Vec<String>>,
+pub struct EntityListReq {
+    pub r#type: Option<String>,
+    pub tag: Option<String>,
+    pub label_contains: Option<String>,
+    pub limit: Option<usize>,
+    pub offset: Option<usize>,
 }
 
-// ─── Response types ─────────────────────────────────────────
+#[derive(Deserialize)]
+pub struct EntityCreateReq {
+    pub entities: Vec<EntityInput>,
+}
+
+#[derive(Deserialize)]
+pub struct EntityUpdateReq {
+    pub label: Option<String>,
+    pub tags: Option<Vec<String>>,
+    pub confidence: Option<f64>,
+    pub properties: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+#[derive(Deserialize)]
+pub struct ClaimCreateReq {
+    pub claims: Vec<ClaimInput>,
+}
+
+#[derive(Deserialize)]
+pub struct ClaimUpdateReq {
+    pub confidence: Option<f64>,
+    pub properties: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+#[derive(Deserialize)]
+pub struct LinkCreateReq {
+    pub from: String,
+    pub to: String,
+    pub r#type: Option<String>,
+    pub weight: Option<f64>,
+}
+
+#[derive(Deserialize)]
+pub struct LinkUpdateReq {
+    pub r#type: Option<String>,
+    pub weight: Option<f64>,
+    pub properties: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+#[derive(Deserialize)]
+pub struct BatchReq {
+    pub turn: Option<TurnInput>,
+    pub entities: Option<Vec<EntityInput>>,
+    pub claims: Option<Vec<ClaimInput>>,
+    pub links: Option<Vec<LinkCreateReq>>,
+}
+
+#[derive(Deserialize)]
+pub struct TurnInput {
+    pub query: Option<String>,
+    pub response: Option<String>,
+    pub model: Option<String>,
+    pub tokens_in: Option<u32>,
+    pub tokens_out: Option<u32>,
+    pub duration_ms: Option<u64>,
+}
+
+// ─── Existing response types ───────────────────────────────
 
 #[derive(Serialize)]
 pub struct RememberResp {
@@ -161,9 +205,129 @@ pub struct SearchedNode {
     pub tags: Vec<String>,
 }
 
+// ─── New REST CRUD response types ──────────────────────────
+
+#[derive(Serialize)]
+pub struct EntityCreateResp {
+    pub created: Vec<String>,
+    pub count: usize,
+}
+
+#[derive(Serialize)]
+pub struct EntityListResp {
+    pub nodes: Vec<EntitySummary>,
+    pub total: usize,
+}
+
+#[derive(Serialize)]
+pub struct EntitySummary {
+    pub id: String,
+    pub label: String,
+    pub r#type: String,
+    pub tags: Vec<String>,
+    pub confidence: f64,
+    pub created_at: String,
+}
+
+#[derive(Serialize)]
+pub struct EntityDetailResp {
+    pub id: String,
+    pub label: String,
+    pub r#type: String,
+    pub tags: Vec<String>,
+    pub confidence: f64,
+    pub embedding: Option<Vec<f32>>,
+    pub properties: serde_json::Map<String, serde_json::Value>,
+    pub links: Vec<LinkSummary>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Serialize)]
+pub struct LinkSummary {
+    pub id: String,
+    pub r#type: String,
+    pub from: String,
+    pub to: String,
+    pub weight: f64,
+    pub properties: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Serialize)]
+pub struct ClaimCreateResp {
+    pub created: Vec<String>,
+    pub count: usize,
+}
+
+#[derive(Serialize)]
+pub struct ClaimDetailResp {
+    pub id: String,
+    pub content: String,
+    pub confidence: f64,
+    pub provenance: Option<String>,
+    pub properties: serde_json::Map<String, serde_json::Value>,
+    pub entities: Vec<EntitySummary>,
+    pub created_at: String,
+}
+
+#[derive(Serialize)]
+pub struct LinkCreateResp {
+    pub id: String,
+    pub from: String,
+    pub to: String,
+    pub r#type: String,
+}
+
+#[derive(Serialize)]
+pub struct BatchResp {
+    pub turn_id: Option<String>,
+    pub entities_created: Vec<String>,
+    pub claims_created: Vec<String>,
+    pub links_created: Vec<String>,
+}
+
+#[derive(Serialize)]
+pub struct StatusResp {
+    pub status: String,
+    pub version: String,
+    pub uptime_secs: u64,
+    pub counts: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Serialize)]
+pub struct UpdateResp {
+    pub status: String,
+}
+
 #[derive(Serialize)]
 pub struct EntityUpdateResp {
     pub status: String,
     pub created: bool,
     pub entities_affected: Vec<String>,
+}
+
+#[derive(Serialize)]
+pub struct DeleteResp {
+    pub status: String,
+    pub deleted: String,
+    pub claims_deleted: Option<usize>,
+    pub links_deleted: Option<usize>,
+}
+
+// ─── Shared input types ────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct EntityInput {
+    pub label: String,
+    pub tags: Option<Vec<String>>,
+    pub confidence: Option<f64>,
+    pub properties: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+#[derive(Deserialize)]
+pub struct ClaimInput {
+    pub content: String,
+    pub confidence: Option<f64>,
+    pub provenance: Option<String>,
+    pub entities: Option<Vec<String>>,
 }
