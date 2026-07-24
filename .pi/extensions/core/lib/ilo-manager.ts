@@ -30,7 +30,7 @@ function getState(): IloManagerState {
 
 // ── Config ────────────────────────────────────────────
 
-const ILO_BINARY = process.env.ILO_BINARY || path.join(EXT_VAR_DIR, '..', 'mem-arch', 'target', 'release', 'mem-arch');
+const ILO_BINARY = process.env.ILO_BINARY || path.join(EXT_VAR_DIR, '..', 'mem-arch', 'target', 'release', 'ilo');
 const ILO_SOCKET = process.env.ILO_SOCKET || path.join(EXT_VAR_DIR, 'ilo.sock');
 const ILO_DB_PATH = process.env.ILO_DB_PATH || path.join(EXT_VAR_DIR, 'ilo_data.lbug');
 const ILO_MAX_UPTIME = process.env.ILO_MAX_UPTIME || '45';
