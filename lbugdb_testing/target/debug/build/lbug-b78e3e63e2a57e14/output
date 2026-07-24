@@ -1,0 +1,116 @@
+cargo:rerun-if-env-changed=LBUG_PRECOMPILED_RUN_ID
+cargo:rerun-if-env-changed=LBUG_VERSION
+cargo:rerun-if-env-changed=LBUG_GITHUB_REPOSITORY
+cargo:rerun-if-env-changed=LBUG_LINUX_VARIANT
+cargo:rerun-if-env-changed=LBUG_LIB_KIND
+cargo:rerun-if-env-changed=LBUG_BUILD_FROM_SOURCE
+cargo:rerun-if-env-changed=LBUG_RUST_BUILD_FROM_SOURCE
+Installed liblbug-static-osx-arm64.tar.gz from release:v0.18.0 to /Users/femi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lbug-0.18.0/.cache/lbug-prebuilt/latest/lib
+Wrote /Users/femi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lbug-0.18.0/.cache/lbug-prebuilt.env
+Resolved precompiled library: /Users/femi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lbug-0.18.0/.cache/lbug-prebuilt/latest/lib/liblbug.a
+cargo:rustc-link-search=native=/Users/femi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lbug-0.18.0/.cache/lbug-prebuilt/latest/lib
+cargo:rerun-if-changed=/Users/femi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lbug-0.18.0/.cache/lbug-prebuilt/latest/lib
+cargo:rustc-env=LBUG_PRECOMPILED_SOURCE=release:LadybugDB/ladybug/latest
+cargo:rustc-env=LBUG_PRECOMPILED_LIBRARY_DIR=/Users/femi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lbug-0.18.0/.cache/lbug-prebuilt/latest/lib
+cargo:rustc-link-arg=-rdynamic
+cargo:rustc-link-lib=static:+whole-archive=lbug
+cargo:rustc-link-lib=dylib=c++
+cargo:CXXBRIDGE_PREFIX=lbug
+cargo:CXXBRIDGE_DIR0=/Users/femi/Documents/ilo/lbugdb_testing/target/debug/build/lbug-b78e3e63e2a57e14/out/cxxbridge/include
+cargo:CXXBRIDGE_DIR1=/Users/femi/Documents/ilo/lbugdb_testing/target/debug/build/lbug-b78e3e63e2a57e14/out/cxxbridge/crate
+cargo:rerun-if-env-changed=LBUG_SHARED
+cargo:rerun-if-changed=include/lbug_rs.h
+cargo:rerun-if-changed=src/lbug_rs.cpp
+cargo:rerun-if-changed=src/ffi.rs
+cargo:rerun-if-changed=src/lbug_rs.cpp
+cargo:rerun-if-env-changed=CC_FORCE_DISABLE
+CC_FORCE_DISABLE = None
+cargo:rerun-if-env-changed=CXX_aarch64-apple-darwin
+CXX_aarch64-apple-darwin = None
+cargo:rerun-if-env-changed=CXX_aarch64_apple_darwin
+CXX_aarch64_apple_darwin = None
+cargo:rerun-if-env-changed=HOST_CXX
+HOST_CXX = None
+cargo:rerun-if-env-changed=CXX
+CXX = None
+cargo:rerun-if-env-changed=CC_ENABLE_DEBUG_OUTPUT
+cargo:rerun-if-env-changed=CRATE_CC_NO_DEFAULTS
+CRATE_CC_NO_DEFAULTS = None
+cargo:rerun-if-env-changed=MACOSX_DEPLOYMENT_TARGET
+MACOSX_DEPLOYMENT_TARGET = None
+cargo:rerun-if-env-changed=CXXFLAGS
+CXXFLAGS = None
+cargo:rerun-if-env-changed=HOST_CXXFLAGS
+HOST_CXXFLAGS = None
+cargo:rerun-if-env-changed=CXXFLAGS_aarch64_apple_darwin
+CXXFLAGS_aarch64_apple_darwin = None
+cargo:rerun-if-env-changed=CXXFLAGS_aarch64-apple-darwin
+CXXFLAGS_aarch64-apple-darwin = None
+cargo:rerun-if-env-changed=CXX_aarch64-apple-darwin
+CXX_aarch64-apple-darwin = None
+cargo:rerun-if-env-changed=CXX_aarch64_apple_darwin
+CXX_aarch64_apple_darwin = None
+cargo:rerun-if-env-changed=HOST_CXX
+HOST_CXX = None
+cargo:rerun-if-env-changed=CXX
+CXX = None
+cargo:rerun-if-env-changed=CRATE_CC_NO_DEFAULTS
+CRATE_CC_NO_DEFAULTS = None
+cargo:rerun-if-env-changed=CXXFLAGS
+CXXFLAGS = None
+cargo:rerun-if-env-changed=HOST_CXXFLAGS
+HOST_CXXFLAGS = None
+cargo:rerun-if-env-changed=CXXFLAGS_aarch64_apple_darwin
+CXXFLAGS_aarch64_apple_darwin = None
+cargo:rerun-if-env-changed=CXXFLAGS_aarch64-apple-darwin
+CXXFLAGS_aarch64-apple-darwin = None
+cargo:rerun-if-env-changed=AR_aarch64-apple-darwin
+AR_aarch64-apple-darwin = None
+cargo:rerun-if-env-changed=AR_aarch64_apple_darwin
+AR_aarch64_apple_darwin = None
+cargo:rerun-if-env-changed=HOST_AR
+HOST_AR = None
+cargo:rerun-if-env-changed=AR
+AR = None
+cargo:rerun-if-env-changed=ARFLAGS
+ARFLAGS = None
+cargo:rerun-if-env-changed=HOST_ARFLAGS
+HOST_ARFLAGS = None
+cargo:rerun-if-env-changed=ARFLAGS_aarch64_apple_darwin
+ARFLAGS_aarch64_apple_darwin = None
+cargo:rerun-if-env-changed=ARFLAGS_aarch64-apple-darwin
+ARFLAGS_aarch64-apple-darwin = None
+cargo:rerun-if-env-changed=AR_aarch64-apple-darwin
+AR_aarch64-apple-darwin = None
+cargo:rerun-if-env-changed=AR_aarch64_apple_darwin
+AR_aarch64_apple_darwin = None
+cargo:rerun-if-env-changed=HOST_AR
+HOST_AR = None
+cargo:rerun-if-env-changed=AR
+AR = None
+cargo:rerun-if-env-changed=ARFLAGS
+ARFLAGS = None
+cargo:rerun-if-env-changed=HOST_ARFLAGS
+HOST_ARFLAGS = None
+cargo:rerun-if-env-changed=ARFLAGS_aarch64_apple_darwin
+ARFLAGS_aarch64_apple_darwin = None
+cargo:rerun-if-env-changed=ARFLAGS_aarch64-apple-darwin
+ARFLAGS_aarch64-apple-darwin = None
+cargo:rerun-if-env-changed=AR_aarch64-apple-darwin
+AR_aarch64-apple-darwin = None
+cargo:rerun-if-env-changed=AR_aarch64_apple_darwin
+AR_aarch64_apple_darwin = None
+cargo:rerun-if-env-changed=HOST_AR
+HOST_AR = None
+cargo:rerun-if-env-changed=AR
+AR = None
+cargo:rerun-if-env-changed=ARFLAGS
+ARFLAGS = None
+cargo:rerun-if-env-changed=HOST_ARFLAGS
+HOST_ARFLAGS = None
+cargo:rerun-if-env-changed=ARFLAGS_aarch64_apple_darwin
+ARFLAGS_aarch64_apple_darwin = None
+cargo:rerun-if-env-changed=ARFLAGS_aarch64-apple-darwin
+ARFLAGS_aarch64-apple-darwin = None
+cargo:rustc-link-lib=static=lbug_rs
+cargo:rustc-link-search=native=/Users/femi/Documents/ilo/lbugdb_testing/target/debug/build/lbug-b78e3e63e2a57e14/out

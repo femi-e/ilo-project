@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "esModuleInterop": true,
+    "strict": true,
+    "ignoreDeprecations": "6.0",
+    "skipLibCheck": true,
+    "outDir": "dist",
+    "types": ["node"],
+    "paths": {
+      "@earendil-works/pi-coding-agent": [
+        "/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts"
+      ]
+    },
+    "baseUrl": "."
+  },
+  "include": [".pi/extensions/core/**/*.ts"],
+  "exclude": ["node_modules", "tests", "dist"]
+}
