@@ -21,9 +21,9 @@ import { registerDiagnosticsTool } from './tools/diagnostics';
 
 export default async function (pi: ExtensionAPI): Promise<void> {
   // ── Register interaction loop hooks ────────────────
-  registerContextHooks(pi);   // before_agent_start: extract → embed → recall → inject
-  registerInputHooks(pi);     // input: store user text for context
-  registerTurnHooks(pi);      // turn_end: learn → remember
+  registerContextHooks(pi);
+  registerInputHooks(pi);
+  registerTurnHooks(pi);
 
   // ── Register ILO tools for the LLM ─────────────────
   registerIloTools(pi);
@@ -32,6 +32,17 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   registerWebCrawlTool(pi);
   registerTaskTool(pi);
   registerDiagnosticsTool(pi);
+
+  // ── Guard: protect ILO database files from accidental deletion ──
+  pi.on('tool_call', async (event: any) => {
+    if (event.toolName !== 'bash') return;
+    const cmd: string = (event.input?.command || '').toLowerCase();
+    // Only protect the database file. PID and socket files may need cleanup on restart.
+    if (cmd.includes('ilo_data.lbug')) {
+      event.input.command = 'echo "[ILO GUARD] Cannot delete ILO database file (ilo_data.lbug). This destroys all stored memory."';
+      return;
+    }
+  });
 
   // ── Start ILO sidecar ──────────────────────────────
   const started = await startIlo();

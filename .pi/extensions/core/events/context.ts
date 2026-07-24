@@ -2,10 +2,10 @@
 // events/context.ts — before_agent_start handler (ILO-powered)
 // ============================================================================
 // On each turn before the LLM call:
-//   1. Extract entities from the user's prompt
-//   2. Embed the query for vector search
-//   3. Recall context from ILO (FTS + vector + PPR + graph traversal)
-//   4. Inject context into the system prompt
+//   1. Inject system instructions (once per session)
+//   2. Quick FTS check — do any entities exist matching the query?
+//   3. If yes, inject a one-line hint about using memory_search
+//   4. Full recall is deferred to the memory_search tool (LLM-driven)
 // ============================================================================
 
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
@@ -24,31 +24,26 @@ The project has two parts:
 - **mem-arch/** — Rust service that stores and retrieves memory
 - **.pi/extensions/core/** — TypeScript extension that connects pi to the memory service`;
 
-const MEMORY_FORMAT_SECTION = `# How Memory Works
+const MEMORY_FORMAT_SECTION = `# Memory System
 
-When you receive a block like this, it's your memory from past sessions:
+This project has a persistent memory system (ILO). When you need to recall past information:
+- Use \`memory_search\` to find entities, facts, and past conversations
+- Use \`entity_lookup\` to get full details on a specific entity
+- Use \`memory_store\` when asked to remember something explicitly
+- Use \`entity_connect\` to link related concepts
 
-  @session [query: your question]
-
-  # Focus:
-    EntityName [confidence: 0.95]    \u2190 things that match your question
-
-  # Related:
-    OtherEntity [rel: 0.45]         \u2190 things connected to those matches
-
-- **# Focus** entities are directly relevant to what you asked
-- **# Related** entities are connected to Focus via past conversations
-- Higher scores (0.0-1.0) mean stronger relevance
-- If memory is empty, the block won't appear
-
-When you mention new information, it's automatically saved as memory for future sessions. You don't need to call a tool for this.`;
+Memory is automatically saved after each conversation turn. You don't need a tool for that. Just use \`memory_search\` when you need to recall something.`;
 
 const WORKFLOW_SECTION = `# How to Work
 
 1. Before making changes, check git state with \`git_snapshot\`
 2. Use \`project_tree\` when you need to understand file locations
 3. After meaningful progress, commit with \`git_commit\`
-4. If unsure about a file or concept, use \`entity_lookup\` to check memory`;
+4. If unsure about a file or concept, use \`memory_search\` to check memory
+
+# Hard Rules
+
+- NEVER delete or modify the ILO database files (\`var/ilo_data.lbug\`, \`var/ilo_data.lbug.wal\`) or the Unix socket (\`var/ilo.sock\`) without explicit user confirmation. These files persist across all sessions. Deleting them destroys all stored memory.`;
 
 let SYSTEM_HINT_INJECTED = false;
 
@@ -97,45 +92,29 @@ export function registerContextHooks(pi: ExtensionAPI): void {
       SYSTEM_HINT_INJECTED = true;
     }
 
-    // Skip retrieval for very short inputs
+    // Skip for very short inputs
     if (!userText || userText.length < 10) return;
 
-    // Ensure sidecar is alive before making API calls
+    // Ensure sidecar is alive
     const healthy = await ensureIlo();
-    if (!healthy) {
-      console.error('[ilo-context] sidecar unavailable, skipping memory retrieval');
-      return;
-    }
+    if (!healthy) return;
 
     try {
-      // Step 1: Extract entities from the prompt
-      const extract = await ilo.extract(userText);
+      // Cheap check: FTS search (list mode = no graph expansion, fast)
+      // If no entities match, skip entirely — zero cost for irrelevant queries
+      const check = await ilo.search(userText, true, undefined);
+      const total = check.data?.total || 0;
+      if (total === 0) return;
 
-      // Step 2: Embed the query for vector search
-      let queryEmb: number[] | undefined;
-      try {
-        const emb = await ilo.embed(userText, true);
-        if (emb.ok && emb.data?.embedding?.length) {
-          queryEmb = emb.data.embedding;
-        }
-      } catch {
-        // Embedding failure is non-fatal — falls back to FTS + label match
-      }
+      // Inject a one-line hint — LLM decides whether to use memory_search
+      ctx.addSystemPrompt(`@memory [hint: ${total} relevant ${total === 1 ? 'entry' : 'entries'} exist. Use memory_search() to retrieve them.]`);
 
-      // Step 3: Recall context (FTS + vector + PPR)
-      const recall = await ilo.recall(userText, queryEmb);
-
-      // Step 4: Inject context into system prompt
-      if (recall.ok && recall.data?.context) {
-        ctx.addSystemPrompt(recall.data.context);
-        // Notify about memory context injection (first turn only)
-        if (recall.data.nodes > 0 && ctx?.ui) {
-          ctx.ui.notify(`Retrieved ${recall.data.nodes} memory nodes`, 'info');
-        }
+      // Notify on first hit
+      if (ctx?.ui) {
+        ctx.ui.notify(`Memory hint: ${total} relevant entries`, 'info');
       }
     } catch (err) {
-      console.error('[ilo-context] recall failed:', err);
-      // Non-fatal — LLM can still respond without context
+      console.error('[ilo-context] hint failed:', err);
     }
   });
 }

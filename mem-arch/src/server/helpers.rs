@@ -65,7 +65,9 @@ pub async fn build_entity_mutations(
 }
 
 /// Build claim mutations and Evidence links.
-pub fn build_claim_mutations(
+/// Resolves entity references against the graph to avoid creating duplicate nodes.
+pub async fn build_claim_mutations(
+    store: &mem_arch::ladybug::LadybugStore,
     claims: &[ClaimInput],
     entity_ids: &mut std::collections::HashMap<String, String>,
 ) -> Vec<StoreMutation> {
@@ -87,16 +89,24 @@ pub fn build_claim_mutations(
             for ref_label in ent_refs {
                 let ref_lower = ref_label.to_lowercase();
                 if !entity_ids.contains_key(&ref_lower) {
-                    let new_eid = format!("e_{}", ref_lower.replace(' ', "_"));
-                    entity_ids.insert(ref_lower.clone(), new_eid.clone());
-                    mutations.push(StoreMutation::CreateNode {
-                        id: new_eid.clone(), type_: NodeType::Entity,
-                        tags: vec![], label: ref_label.clone(),
-                        confidence: 0.3,
-                    });
+                    // Resolve against the graph before creating a new entity
+                    match resolve_entity(store, ref_label).await {
+                        Some(existing_id) => {
+                            entity_ids.insert(ref_lower.clone(), existing_id);
+                        },
+                        None => {
+                            let new_eid = format!("e_{}", ref_lower.replace(' ', "_"));
+                            entity_ids.insert(ref_lower.clone(), new_eid.clone());
+                            mutations.push(StoreMutation::CreateNode {
+                                id: new_eid.clone(), type_: NodeType::Entity,
+                                tags: vec![], label: ref_label.clone(),
+                                confidence: 0.3,
+                            });
+                        },
+                    }
                 }
                 let target_id = entity_ids.get(&ref_lower).cloned()
-                    .expect("claim entity reference was just inserted, so it must exist");
+                    .expect("claim entity reference was just inserted or resolved, so it must exist");
                 let link_id = uid("ev");
                 mutations.push(StoreMutation::CreateLink {
                     id: link_id, from: cid.clone(), to: target_id,

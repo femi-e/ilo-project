@@ -196,11 +196,12 @@ class IloClient {
   }
 
   /** Search memory. Use list=true for flat results without graph expansion. */
-  async search(query: string, list?: boolean, tag?: string) {
+  async search(query: string, list?: boolean, tag?: string, queryEmbedding?: number[]) {
     return this.request<{ context: string; nodes: SearchedNode[] | null; total: number }>('POST', '/search', {
       query,
       max_hops: list ? 0 : undefined,
       tag,
+      query_embedding: queryEmbedding,
     });
   }
 

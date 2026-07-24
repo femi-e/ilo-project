@@ -64,7 +64,9 @@ pub async fn remember(
 
     if is_phase2 {
         if let Some(ref claims) = req.claims {
-            let claim_mutations = build_claim_mutations(claims, &mut entity_ids);
+            let store_lock = state.store.read().await;
+            let claim_mutations = build_claim_mutations(&store_lock, claims, &mut entity_ids).await;
+            drop(store_lock);
             all_mutations.extend(claim_mutations);
         }
 
@@ -187,7 +189,9 @@ pub async fn ingest_handler(
     entity_ids.insert(source_key, source_id.clone());
 
     // Use shared helper for claim + entity-claim evidence links
-    let claim_mutations = super::helpers::build_claim_mutations(&claims, &mut entity_ids);
+    let store_lock = state.store.read().await;
+    let claim_mutations = super::helpers::build_claim_mutations(&*store_lock, &claims, &mut entity_ids).await;
+    drop(store_lock);
     let claim_ids: Vec<String> = claim_mutations.iter().filter_map(|m| {
         if let StoreMutation::CreateNode { id, type_, .. } = m {
             if *type_ == NodeType::Claim { Some(id.clone()) } else { None }
@@ -397,9 +401,10 @@ pub async fn search_handler(
         (store.get_tag_index().await.unwrap_or_default(), si)
     };
 
+    let query_emb = req.query_embedding.as_deref();
     let ctx = {
         let store = state.store.read().await;
-        mem_arch::retrieval::retrieve(&query, &*store, &idx, None, Some(&search_index), None, req.max_hops).await.unwrap_or_default()
+        mem_arch::retrieval::retrieve(&query, &*store, &idx, None, Some(&search_index), query_emb, req.max_hops).await.unwrap_or_default()
     };
 
     // Apply tag filter: only include nodes with matching tag

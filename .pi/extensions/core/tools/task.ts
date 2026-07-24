@@ -13,7 +13,14 @@ export function registerTaskTool(api: ExtensionAPI): void {
   api.registerTool({
     name: 'task',
     label: 'Task',
-    description: 'Manage tasks and subtasks. Tasks are stored in the knowledge graph alongside entities — they appear in search results and memory context automatically.',
+    description: 'Manage tasks and subtasks. Supports create, update, and list operations. Tasks are stored in the knowledge graph alongside entities — they appear in memory_search results and memory context automatically.',
+    promptSnippet: 'Create, update, or list tasks and subtasks',
+    promptGuidelines: [
+      'Use task to track work items, todos, and progress during a session.',
+      'Create tasks with "active" status by default. Update status to "completed" when finished.',
+      'Subtasks are created by setting the parent parameter — this links tasks via dependency relationships.',
+      'Task data persists across sessions via the memory graph. Use memory_search to find tasks later.',
+    ],
     parameters: Type.Object({
       action: Type.Enum({
         create: 'create',
@@ -60,7 +67,6 @@ async function createTask(params: any) {
   const properties: Record<string, any> = { status };
 
   if (params.priority) properties.priority = params.priority;
-  if (params.description) properties.description = params.description;
 
   // Create task as an entity with task tag and properties
   await ilo.entityUpdate(title, properties, tags);

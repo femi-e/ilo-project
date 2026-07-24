@@ -1,8 +1,41 @@
 mod server;
 
 use mem_arch::ladybug::LadybugStore;
+use std::os::unix::io::AsRawFd;
 
 use server::run_server;
+
+/// Write our PID to a file so other instances can detect us.
+fn write_pid_file(pid_path: &std::path::Path) {
+    if let Err(e) = std::fs::write(pid_path, format!("{}", std::process::id())) {
+        tracing::warn!("Failed to write PID file {:?}: {e}", pid_path);
+    }
+}
+
+/// Remove the PID file on exit.
+fn remove_pid_file(pid_path: &std::path::Path) {
+    let _ = std::fs::remove_file(pid_path);
+}
+
+/// Try to acquire a BSD-style flock on a PID file.
+/// Returns Ok if we got the lock, Err if another instance holds it.
+fn try_lock(lock_path: &std::path::Path) -> Result<std::fs::File, String> {
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(lock_path)
+        .map_err(|e| format!("Cannot open lock file: {e}"))?;
+
+    // Use flock via libc on macOS/Linux
+    let fd = file.as_raw_fd();
+    let ret = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
+    if ret != 0 {
+        let err = std::io::Error::last_os_error();
+        return Err(format!("Another ILO instance holds the lock (flock: {err})"));
+    }
+    Ok(file)
+}
 
 #[tokio::main]
 async fn main() {
@@ -25,10 +58,29 @@ async fn main() {
     }
 
     // Ensure the var/ directory exists (for socket and DB files)
-    if let Some(parent) = std::path::Path::new(&db_path).parent() {
+    let var_dir = std::path::Path::new(&db_path).parent();
+    if let Some(parent) = var_dir {
         std::fs::create_dir_all(parent).ok();
     }
+
+    // ── Single-instance enforcement via flock ──
+    let lock_dir = var_dir.unwrap_or(std::path::Path::new("."));
+    let lock_path = lock_dir.join("ilo.lock");
+    let _lock_file = match try_lock(&lock_path) {
+        Ok(f) => f,
+        Err(msg) => {
+            tracing::error!("{} — exiting", msg);
+            std::process::exit(1);
+        }
+    };
+    // Write PID file for reference
+    let pid_path = lock_dir.join("ilo.pid");
+    write_pid_file(&pid_path);
+
     // Open or create the database (retry up to 5 times for lock contention)
+    // With flock in place, lock contention should not occur — but we still
+    // handle it defensively for the rare case where LadybugDB's internal
+    // WAL lock persists from a crashed process.
     let store = {
         let mut retries = 0;
         let store = loop {
@@ -49,16 +101,27 @@ async fn main() {
         match store {
             Some(s) => s,
             None => {
-                // Lock persisted after 5 retries. Don't delete the DB — that
-                // would destroy data if another live process holds the lock.
-                // Just exit; the pi extension's auto-restart will retry.
+                // Lock persisted after 5 retries — the previous process likely
+                // crashed mid-transaction. Don't delete files; just exit and let
+                // the OS release the lock on restart.
                 tracing::error!(
                     "Database still locked after 5 retries at {}. \
-                     If no other ILO process is running, delete the .lbug files manually \
-                     or wait for the OS lock to expire.",
+                     The OS will release the lock when the zombie process exits. \
+                     Retrying in 3 seconds...",
                     db_path
                 );
-                std::process::exit(1);
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                match LadybugStore::new(&db_path) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::error!(
+                            "Database still locked at {} after retry: {}. Exiting.",
+                            db_path, e
+                        );
+                        remove_pid_file(&pid_path);
+                        std::process::exit(1);
+                    }
+                }
             }
         }
     };
@@ -86,7 +149,8 @@ async fn main() {
         run_server(store, &socket_path).await;
     }
 
-    // Cleanup socket on exit
+    // Cleanup socket and PID file on exit
     let _ = std::fs::remove_file(&socket_path);
+    remove_pid_file(&pid_path);
     tracing::info!("ILO shutdown complete");
 }

@@ -90,6 +90,7 @@ pub struct SearchReq {
     pub query: String,
     pub max_hops: Option<u8>,
     pub tag: Option<String>,
+    pub query_embedding: Option<Vec<f32>>,
 }
 
 #[derive(Deserialize)]

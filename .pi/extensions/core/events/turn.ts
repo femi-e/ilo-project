@@ -58,11 +58,18 @@ export function registerTurnHooks(pi: ExtensionAPI): void {
 
   pi.on('turn_end', async (event: any, ctx: any) => {
     const state = getState();
-    const turn = event?.turn || event;
     const userText = state.lastUserText;
-    const responseText = turn?.response || turn?.text || '';
+    const msg = event?.message;
+    const rawContent = msg?.content;
+    const responseText = typeof rawContent === 'string'
+      ? rawContent
+      : Array.isArray(rawContent)
+        ? rawContent.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n')
+        : '';
 
-    if (!userText && !responseText) return;
+    if (!userText && !responseText) {
+      return;
+    }
 
     // Ensure sidecar is alive before storing this turn
     const healthy = await ensureIlo();

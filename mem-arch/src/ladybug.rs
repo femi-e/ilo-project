@@ -2,7 +2,7 @@
 use crate::store::Store;
 use crate::types::*;
 use async_trait::async_trait;
-use lbug::{Connection, Database, SystemConfig, Value};
+use lbug::{Connection, Database, LogicalType, SystemConfig, Value};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -160,53 +160,100 @@ impl LadybugStore {
 }
 
 /// Format a Vec<String> of tags into Cypher array syntax.
-fn fmt_tags(tags: &[String]) -> String {
-    if tags.is_empty() {
-        "[]".to_string()
-    } else {
-        format!("[{}]", tags.iter().map(|t| format!("'{}'", t.replace('\'', "''"))).collect::<Vec<_>>().join(", "))
+/// Convert Vec<String> tags into a LadybugDB Value::List for parameterized queries.
+fn tags_to_value(tags: &[String]) -> Value {
+    Value::List(
+        LogicalType::String,
+        tags.iter().map(|t| Value::String(t.clone())).collect(),
+    )
+}
+
+fn pv(v: &PropValue) -> (String, Value) {
+    match v {
+        PropValue::String(s) => ("str".into(), Value::String(s.clone())),
+        PropValue::Float(f) => ("float".into(), Value::Double(*f)),
+        PropValue::Int(i) => ("int".into(), Value::Int64(*i)),
+        PropValue::Bool(b) => ("bool".into(), Value::Bool(*b)),
+        PropValue::Json(j) => ("json".into(), Value::String(j.to_string())),
     }
 }
 
-fn pv(v: &PropValue) -> (String, String) {
-    match v {
-        PropValue::String(s) => ("str".into(), format!("'{}'", s.replace('\'',"''"))),
-        PropValue::Float(f) => ("float".into(), f.to_string()),
-        PropValue::Int(i) => ("int".into(), i.to_string()),
-        PropValue::Bool(b) => ("bool".into(), if *b{"true".into()}else{"false".into()}),
-        PropValue::Json(j) => ("json".into(), format!("'{}'", j.to_string().replace('\'',"''"))),
-    }
+/// Execute a parameterized Cypher query using prepare + execute.
+fn exec_params(c: &Connection, query: &str, params: Vec<(&str, Value)>) -> Result<(), StoreError> {
+    let mut stmt = c.prepare(query)?;
+    c.execute(&mut stmt, params)?;
+    Ok(())
 }
 
 fn apply(c: &Connection, m: &StoreMutation) -> Result<(), StoreError> {
     match m {
         StoreMutation::CreateNode { id, type_, tags, label, confidence } => {
-            let tags_str = fmt_tags(tags);
-            let cypher = format!("CREATE (:Node {{id: '{}', type: '{}', tags: {}, label: '{}', confidence: {}}})",
-                id, type_.as_str(), tags_str, label.replace('\'',"''"), confidence);
-            c.query(&cypher)?;
+            exec_params(c, "CREATE (:Node {id: $id, type: $type, tags: $tags, label: $label, confidence: $confidence})", vec![
+                ("id", Value::String(id.clone())),
+                ("type", Value::String(type_.as_str().into())),
+                ("tags", tags_to_value(tags)),
+                ("label", Value::String(label.clone())),
+                ("confidence", Value::Double(*confidence)),
+            ])?;
         }
         StoreMutation::SetProperty { owner_id, owner_kind, key, value } => {
             let pid = format!("{}::{}", owner_id, key);
-            let (k, val) = pv(value);
-            c.query(&format!("MERGE (p:Prop {{id: '{}'}}) SET p.owner_id = '{}', p.owner_kind = '{}', p.key = '{}', p.kind = '{}', p.val_{} = {}", pid, owner_id, owner_kind.as_str(), key, k, k, val))?;
+            let (kind, val) = pv(value);
+            let col = match kind.as_str() {
+                "str" => "val_str",
+                "float" => "val_float",
+                "int" => "val_int",
+                "bool" => "val_bool",
+                "json" => "val_json",
+                _ => "val_str",
+            };
+            exec_params(
+                c,
+                &format!("MERGE (p:Prop {{id: $pid}}) SET p.owner_id = $owner_id, p.owner_kind = $owner_kind, p.key = $key, p.kind = $kind, p.{} = $val", col),
+                vec![
+                    ("pid", Value::String(pid)),
+                    ("owner_id", Value::String(owner_id.clone())),
+                    ("owner_kind", Value::String(owner_kind.as_str().into())),
+                    ("key", Value::String(key.clone())),
+                    ("kind", Value::String(kind)),
+                    ("val", val),
+                ],
+            )?;
         }
         StoreMutation::DeleteProperty { owner_id, key } => {
-            c.query(&format!("MATCH (p:Prop) WHERE p.owner_id = '{}' AND p.key = '{}' DELETE p", owner_id.replace('\'',"''"), key.replace('\'',"''")))?;
+            exec_params(c, "MATCH (p:Prop) WHERE p.owner_id = $owner_id AND p.key = $key DELETE p", vec![
+                ("owner_id", Value::String(owner_id.clone())),
+                ("key", Value::String(key.clone())),
+            ])?;
         }
         StoreMutation::CreateLink { id, from, to, type_, tags, weight } => {
-            let tags_str = fmt_tags(tags);
-            c.query(&format!("MATCH (a:Node {{id: '{}'}}), (b:Node {{id: '{}'}}) CREATE (a)-[:LINK {{id: '{}', type: '{}', tags: {}, weight: {}}}]->(b)", from, to, id, type_.as_str(), tags_str, weight))?;
+            exec_params(c, "MATCH (a:Node {id: $from}), (b:Node {id: $to}) CREATE (a)-[:LINK {id: $lid, type: $type, tags: $tags, weight: $weight}]->(b)", vec![
+                ("from", Value::String(from.clone())),
+                ("to", Value::String(to.clone())),
+                ("lid", Value::String(id.clone())),
+                ("type", Value::String(type_.as_str().into())),
+                ("tags", tags_to_value(tags)),
+                ("weight", Value::Double(*weight)),
+            ])?;
         }
         StoreMutation::UpdateLinkWeight { id, weight } => {
-            c.query(&format!("MATCH ()-[l:LINK {{id: '{}'}}]->() SET l.weight = {}", id, weight))?;
+            exec_params(c, "MATCH ()-[l:LINK {id: $id}]->() SET l.weight = $weight", vec![
+                ("id", Value::String(id.clone())),
+                ("weight", Value::Double(*weight)),
+            ])?;
         }
         StoreMutation::DeleteLink { id } => {
-            c.query(&format!("MATCH ()-[l:LINK {{id: '{}'}}]->() DELETE l", id))?;
+            exec_params(c, "MATCH ()-[l:LINK {id: $id}]->() DELETE l", vec![
+                ("id", Value::String(id.clone())),
+            ])?;
         }
         StoreMutation::DeleteNode { id } => {
-            c.query(&format!("MATCH (p:Prop) WHERE p.owner_id = '{}' DELETE p", id))?;
-            c.query(&format!("MATCH (n:Node {{id: '{}'}}) DETACH DELETE n", id))?;
+            exec_params(c, "MATCH (p:Prop) WHERE p.owner_id = $owner_id DELETE p", vec![
+                ("owner_id", Value::String(id.clone())),
+            ])?;
+            exec_params(c, "MATCH (n:Node {id: $id}) DETACH DELETE n", vec![
+                ("id", Value::String(id.clone())),
+            ])?;
         }
     }
     Ok(())
@@ -289,7 +336,8 @@ fn parse_prop(row: &[Value]) -> Option<PropRecord> {
 }
 
 fn collect_props(c: &Connection, oid: &str) -> Result<Vec<PropRecord>, StoreError> {
-    let mut r=c.query(&format!("MATCH (p:Prop) WHERE p.owner_id = '{}' RETURN p.id, p.owner_id, p.owner_kind, p.key, p.kind, p.val_str, p.val_float, p.val_int, p.val_bool, p.val_json", oid.replace('\'',"''")))?;
+    let mut stmt = c.prepare("MATCH (p:Prop) WHERE p.owner_id = $owner_id RETURN p.id, p.owner_id, p.owner_kind, p.key, p.kind, p.val_str, p.val_float, p.val_int, p.val_bool, p.val_json")?;
+    let mut r = c.execute(&mut stmt, vec![("owner_id", Value::String(oid.to_string()))])?;
     let mut v=Vec::new();
     for row in &mut r {
         if let Some(prop) = parse_prop(&row) {
@@ -316,43 +364,84 @@ impl Store for LadybugStore {
         if let Some(ref _resp) = batch.turn.response_text {
             let turn = &batch.turn;
             let label = format!("Turn #{}", turn.turn_index);
-            let esc = |s: &str| s.replace('\'', "''");
 
-            c.query(&format!("CREATE (:Node {{id: '{}', type: 'turn', label: '{}', confidence: 1.0}})", tid, esc(&label)))?;
+            exec_params(&c, "CREATE (:Node {id: $id, type: 'turn', label: $label, confidence: 1.0})", vec![
+                ("id", Value::String(tid.clone())),
+                ("label", Value::String(label)),
+            ])?;
 
             // Create turn properties (only for fields that have values)
-            let turn_props: Vec<(&str, &str, String)> = vec![
-                ("turn_index", "int", turn.turn_index.to_string()),
-            ];
-            let mut all_props = turn_props;
-            if let Some(ref ut) = turn.user_text { all_props.push(("user_text", "string", esc(ut))); }
-            if let Some(ref rt) = turn.response_text { all_props.push(("response_text", "string", esc(rt))); }
-            if let Some(ref m) = turn.model { all_props.push(("model", "string", esc(m))); }
-            if let Some(ref ti) = turn.tokens_in { all_props.push(("tokens_in", "int", ti.to_string())); }
-            if let Some(ref to) = turn.tokens_out { all_props.push(("tokens_out", "int", to.to_string())); }
-            if let Some(ref d) = turn.duration_ms { all_props.push(("duration_ms", "int", d.to_string())); }
+            // turn_index is always present (int)
+            exec_params(&c, "CREATE (:Prop {id: $pid, owner_id: $owner_id, owner_kind: 'node', key: 'turn_index', kind: 'int', val_int: $val})", vec![
+                ("pid", Value::String(format!("{}::turn_index", tid))),
+                ("owner_id", Value::String(tid.clone())),
+                ("val", Value::Int64(turn.turn_index as i64)),
+            ])?;
 
-            for (key, kind, val) in &all_props {
-                let val_col = if *kind == "string" {
-                    format!("val_str: '{}'", val)
-                } else {
-                    format!("val_int: {}", val)
-                };
-                c.query(&format!("CREATE (:Prop {{id: '{}::{}', owner_id: '{}', owner_kind: 'node', key: '{}', kind: '{}', {}}})",
-                    tid, key, tid, key, kind, val_col))?;
+            // user_text (string, optional)
+            if let Some(ref ut) = turn.user_text {
+                exec_params(&c, "CREATE (:Prop {id: $pid, owner_id: $owner_id, owner_kind: 'node', key: 'user_text', kind: 'string', val_str: $val})", vec![
+                    ("pid", Value::String(format!("{}::user_text", tid))),
+                    ("owner_id", Value::String(tid.clone())),
+                    ("val", Value::String(ut.clone())),
+                ])?;
+            }
+
+            // response_text (string, optional)
+            if let Some(ref rt) = turn.response_text {
+                exec_params(&c, "CREATE (:Prop {id: $pid, owner_id: $owner_id, owner_kind: 'node', key: 'response_text', kind: 'string', val_str: $val})", vec![
+                    ("pid", Value::String(format!("{}::response_text", tid))),
+                    ("owner_id", Value::String(tid.clone())),
+                    ("val", Value::String(rt.clone())),
+                ])?;
+            }
+
+            // model (string, optional)
+            if let Some(ref m) = turn.model {
+                exec_params(&c, "CREATE (:Prop {id: $pid, owner_id: $owner_id, owner_kind: 'node', key: 'model', kind: 'string', val_str: $val})", vec![
+                    ("pid", Value::String(format!("{}::model", tid))),
+                    ("owner_id", Value::String(tid.clone())),
+                    ("val", Value::String(m.clone())),
+                ])?;
+            }
+
+            // tokens_in (int, optional)
+            if let Some(ref ti) = turn.tokens_in {
+                exec_params(&c, "CREATE (:Prop {id: $pid, owner_id: $owner_id, owner_kind: 'node', key: 'tokens_in', kind: 'int', val_int: $val})", vec![
+                    ("pid", Value::String(format!("{}::tokens_in", tid))),
+                    ("owner_id", Value::String(tid.clone())),
+                    ("val", Value::Int64(*ti as i64)),
+                ])?;
+            }
+
+            // tokens_out (int, optional)
+            if let Some(ref to) = turn.tokens_out {
+                exec_params(&c, "CREATE (:Prop {id: $pid, owner_id: $owner_id, owner_kind: 'node', key: 'tokens_out', kind: 'int', val_int: $val})", vec![
+                    ("pid", Value::String(format!("{}::tokens_out", tid))),
+                    ("owner_id", Value::String(tid.clone())),
+                    ("val", Value::Int64(*to as i64)),
+                ])?;
+            }
+
+            // duration_ms (int, optional)
+            if let Some(ref d) = turn.duration_ms {
+                exec_params(&c, "CREATE (:Prop {id: $pid, owner_id: $owner_id, owner_kind: 'node', key: 'duration_ms', kind: 'int', val_int: $val})", vec![
+                    ("pid", Value::String(format!("{}::duration_ms", tid))),
+                    ("owner_id", Value::String(tid.clone())),
+                    ("val", Value::Int64(*d as i64)),
+                ])?;
             }
 
             // Link to previous turn for temporal ordering.
-            // Note: in rare concurrent-write scenarios, two simultaneous
-            // transactions may both see the same previous turn (neither sees
-            // the other's uncommitted turn). This creates a fork in the seq
-            // chain, which is harmless — seq links are advisory, not critical.
             if let Ok(mut prev) = c.query("MATCH (t:Node {type: 'turn'}) RETURN t.id ORDER BY t.created_at DESC LIMIT 1") {
                 if let Some(row) = prev.next() {
                     if let Value::String(prev_id) = &row[0] {
                         let seq_id = uid("seq");
-                        c.query(&format!("MATCH (a:Node {{id: '{}'}}), (b:Node {{id: '{}'}}) CREATE (a)-[:LINK {{id: '{}', type: 'seq', weight: 0.9}}]->(b)",
-                            prev_id, tid, seq_id))?;
+                        exec_params(&c, "MATCH (a:Node {id: $prev}), (b:Node {id: $next}) CREATE (a)-[:LINK {id: $lid, type: 'seq', weight: 0.9}]->(b)", vec![
+                            ("prev", Value::String(prev_id.clone())),
+                            ("next", Value::String(tid.clone())),
+                            ("lid", Value::String(seq_id)),
+                        ])?;
                     }
                 }
             }
@@ -397,10 +486,10 @@ impl Store for LadybugStore {
         }
         // Cache miss: fall back to DB query (recovers from cache/DB desync)
         let c = Connection::new(self.db.as_ref())?;
-        let mut r = c.query(&format!(
-            "MATCH (n:Node {{id: '{}'}}) RETURN n.id, n.type, n.tags, n.label, n.confidence, n.created_at, n.updated_at, n.embedding",
-            id.replace('\'', "''")
-        ))?;
+        let mut stmt = c.prepare(
+            "MATCH (n:Node {id: $id}) RETURN n.id, n.type, n.tags, n.label, n.confidence, n.created_at, n.updated_at, n.embedding"
+        )?;
+        let mut r = c.execute(&mut stmt, vec![("id", Value::String(id.clone()))])?;
         for row in &mut r {
             if let Some(node) = row_to_node(&row) {
                 // Update cache for future reads
@@ -433,7 +522,11 @@ impl Store for LadybugStore {
 
     async fn get_property(&self, owner_id: &str, key: &str) -> Result<Option<PropRecord>, StoreError> {
         let c = Connection::new(self.db.as_ref())?;
-        let mut r = c.query(&format!("MATCH (p:Prop) WHERE p.owner_id = '{}' AND p.key = '{}' RETURN p.id, p.owner_id, p.owner_kind, p.key, p.kind, p.val_str, p.val_float, p.val_int, p.val_bool, p.val_json", owner_id.replace('\'',"''"), key.replace('\'',"''")))?;
+        let mut stmt = c.prepare("MATCH (p:Prop) WHERE p.owner_id = $owner_id AND p.key = $key RETURN p.id, p.owner_id, p.owner_kind, p.key, p.kind, p.val_str, p.val_float, p.val_int, p.val_bool, p.val_json")?;
+        let mut r = c.execute(&mut stmt, vec![
+            ("owner_id", Value::String(owner_id.to_string())),
+            ("key", Value::String(key.to_string())),
+        ])?;
         for row in &mut r {
             let prop = parse_prop(&row);
             if prop.is_some() { return Ok(prop); }

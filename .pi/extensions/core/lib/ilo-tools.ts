@@ -2,7 +2,15 @@
 // lib/ilo-tools.ts — LLM-invokable tools for ILO
 // ============================================================================
 // These tools let the LLM interact with the ILO knowledge graph during
-// generation: look up entities, store facts, link concepts, etc.
+// generation: search memory, store facts, link entities, manage tasks, etc.
+// ============================================================================
+// Naming convention: {domain}_{action}
+//   memory_*  — semantic memory operations (search, store, ingest)
+//   entity_*  — direct graph entity operations (lookup, connect, update, forget)
+//   web_*     — internet access (search, scrape, crawl)
+//   project_* — project-level operations (tree)
+//   git_*     — git operations (snapshot, commit)
+//   system_*  — system operations (diagnostics)
 // ============================================================================
 
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
@@ -14,39 +22,63 @@ import { ilo } from './ilo-client';
 const asyncExec = promisify(exec);
 const GIT_TIMEOUT = 10000;
 
-// Helper to create error responses with type-safe details
-function toolError(msg: string) {
-  return { content: [{ type: 'text' as const, text: msg }], details: {} as any };
-}
-
 export function registerIloTools(api: ExtensionAPI): void {
-  // ── search: Search memory ───────────────────────────
+  // ═══════════════════════════════════════════════════════════════
+  // MEMORY TOOLS — semantic memory (past conversations, facts)
+  // ═══════════════════════════════════════════════════════════════
+
+  // ── memory_search: Full recall (FTS + vector + PPR) ──────
   api.registerTool({
-    name: 'search',
-    label: 'Search',
-    description: 'Search memory for entities by query, tag, or type. Returns a context block with matching entities and their relationships.',
+    name: 'memory_search',
+    label: 'Memory Search',
+    description: 'Search persistent memory for entities, facts, and past conversations matching your query. Uses full-text search and graph traversal to find connected information. Returns structured context with relevance scores and relationship paths.',
+    promptSnippet: 'Search persistent memory for past conversations, entities, and stored facts',
+    promptGuidelines: [
+      'Use memory_search to recall information from past conversations, stored entities, and knowledge graph connections.',
+      'For finding current live information from the internet, use web_search instead of memory_search.',
+      'For full details on a single specific entity (tags, properties), use entity_lookup instead of memory_search.',
+      'Be specific in your query — include entity names and key terms for best results.',
+      'If memory_search returns relevant results, you can follow up with entity_lookup to get full details on any entity.',
+    ],
     parameters: Type.Object({
-      query: Type.String({ description: 'What to search for — describe what you need in natural language' }),
-      list: Type.Optional(Type.Boolean({ description: 'Set to true for a flat list of matches without showing relationships. Use when you want a catalogue ("list all tasks"). Default: false (shows connections between entities).' })),
+      query: Type.String({ description: 'What to search for — describe the entity, fact, or conversation in natural language' }),
+      list: Type.Optional(Type.Boolean({ description: 'Set to true for a flat list of matches without graph relationship exploration. Use when you want a catalogue of results (e.g., "list all tasks"). Default: false (shows connections between entities).' })),
       tag: Type.Optional(Type.String({ description: 'Filter by tag — narrow results to a specific category like "project", "task", or "person"' })),
     }),
     execute: async (_id, params) => {
-      const res = await ilo.search(params.query, params.list, params.tag);
+      // Best-effort: embed the query for vector search, fall back to FTS-only
+      let queryEmb: number[] | undefined;
+      try {
+        const emb = await ilo.embed(params.query, true);
+        if (emb.ok && emb.data?.embedding?.length) {
+          queryEmb = emb.data.embedding;
+        }
+      } catch {
+        // Embedding failure is non-fatal — falls back to FTS + label match
+      }
+
+      const res = await ilo.search(params.query, params.list, params.tag, queryEmb);
       if (!res.ok) return { content: [{ type: 'text', text: `Search failed: ${res.error}` }], details: {} as any };
-      if (!res.data?.context) return { content: [{ type: 'text', text: 'No results found.' }], details: {} as any };
+      if (!res.data?.context) return { content: [{ type: 'text', text: 'No results found in memory.' }], details: {} as any };
       return { content: [{ type: 'text', text: res.data.context }], details: { total: res.data.total } };
     },
   });
 
-  // ── store: Store a fact as an entity + claim ────────
+  // ── memory_store: Store a fact as entity + claim ───────
   api.registerTool({
-    name: 'store',
-    label: 'Store',
-    description: 'Store a fact or entity in persistent long-term memory. Creates an entity node and a claim linked to it.',
+    name: 'memory_store',
+    label: 'Memory Store',
+    description: 'Store a fact, entity, or belief in persistent long-term memory (ILO graph). Creates an entity node and a linked claim so future memory_search calls can find it.',
+    promptSnippet: 'Store facts and entities into persistent long-term memory',
+    promptGuidelines: [
+      'Use memory_store when the user explicitly asks you to remember something for later, or when you discover important facts about a project, person, or concept that should persist across sessions.',
+      'For ingesting large external content (web articles, files) use memory_ingest instead of memory_store.',
+      'The entity parameter is the subject of the fact (e.g., "database schema" or "Alice"). The content is the actual fact text to store.',
+    ],
     parameters: Type.Object({
       content: Type.String({ description: 'The fact text to store as a claim' }),
       entity: Type.Optional(Type.String({ description: 'The entity label this claim is about (default: "general")' })),
-      confidence: Type.Optional(Type.Number({ description: '0.0 to 1.0 (default 0.5)' })),
+      confidence: Type.Optional(Type.Number({ description: 'Confidence level 0.0 to 1.0 (default 0.5). Use higher values for confirmed facts, lower for speculation.' })),
     }),
     execute: async (_id, params) => {
       const content = (params.content || '').trim();
@@ -54,8 +86,6 @@ export function registerIloTools(api: ExtensionAPI): void {
       const entity = params.entity || 'general';
       const conf = params.confidence ?? 0.5;
 
-      // Use seconds-since-epoch as turn_index (fits u32, ~2106 overflow)
-      // Not a real conversation turn — this is a standalone fact store.
       const ts = Math.floor(Date.now() / 1000);
       const res = await ilo.remember({
         query: '',
@@ -73,15 +103,21 @@ export function registerIloTools(api: ExtensionAPI): void {
     },
   });
 
-  // ── ingest: Ingest external content ─────────────────
+  // ── memory_ingest: Ingest external content ─────────────
   api.registerTool({
-    name: 'ingest',
-    label: 'Ingest',
-    description: 'Save external content (web articles, files, notes) into memory as entities and claims. The content is extracted and linked to the knowledge graph without creating a conversation turn.',
+    name: 'memory_ingest',
+    label: 'Memory Ingest',
+    description: 'Save external content (web articles, files, notes, documentation) into memory as entities and claims. The content is automatically parsed and linked into the knowledge graph without creating a conversation turn.',
+    promptSnippet: 'Ingest external content (articles, docs, notes) into memory',
+    promptGuidelines: [
+      'Use memory_ingest when you want to save external content (web pages, documentation, notes) into long-term memory so it can be found by future memory_search calls.',
+      'Unlike memory_store which stores a single fact, memory_ingest processes full text content and extracts multiple entities and claims from it.',
+      'Use web_scrape first to fetch page content, then pass it to memory_ingest.',
+    ],
     parameters: Type.Object({
       content: Type.String({ description: 'The full text content to ingest' }),
-      source: Type.String({ description: 'A label identifying the source (URL, filename, or description)' }),
-      tags: Type.Optional(Type.Array(Type.String(), { description: 'Optional tags for categorization' })),
+      source: Type.String({ description: 'A label identifying the source (URL, filename, or short description)' }),
+      tags: Type.Optional(Type.Array(Type.String(), { description: 'Optional tags for categorization (e.g., ["documentation", "api"])' })),
     }),
     execute: async (_id, params) => {
       const res = await ilo.ingest(params.content, params.source, params.tags);
@@ -93,15 +129,50 @@ export function registerIloTools(api: ExtensionAPI): void {
     },
   });
 
-  // ── connect: Link two entities ─────────────────────
+  // ═══════════════════════════════════════════════════════════════
+  // ENTITY TOOLS — direct graph operations on entities
+  // ═══════════════════════════════════════════════════════════════
+
+  // ── entity_lookup: Look up a single entity ─────────────
   api.registerTool({
-    name: 'connect',
-    label: 'Connect',
-    description: 'Link two entities in the knowledge graph.',
+    name: 'entity_lookup',
+    label: 'Entity Lookup',
+    description: 'Look up a single entity by name and return its full details: ID, confidence, tags, and properties. Use when you need structured data about one specific entity rather than a search across many.',
+    promptSnippet: 'Look up full details on a single entity by name',
+    promptGuidelines: [
+      'Use entity_lookup when you need the full structured details (tags, properties, confidence) of a single specific entity.',
+      'Use memory_search instead when you need to find entities by description or explore relationships between entities.',
+      'After memory_search returns interesting results, use entity_lookup on promising entity names for their full details.',
+    ],
     parameters: Type.Object({
-      from: Type.String({ description: 'Source entity' }),
-      to: Type.String({ description: 'Target entity' }),
-      link_type: Type.Optional(Type.String({ description: 'Link type: ref, dep, con, evidence' })),
+      name: Type.String({ description: 'The exact entity name to look up (case-insensitive)' }),
+    }),
+    execute: async (_id, params) => {
+      const res = await ilo.entityLookup(params.name);
+      if (!res.ok) return { content: [{ type: 'text', text: `Lookup failed: ${res.error}` }], details: {} as any };
+      if (!res.data?.found) return { content: [{ type: 'text', text: `Entity "${params.name}" not found in memory.` }], details: {} as any };
+      return {
+        content: [{ type: 'text', text: `Found: ${res.data.name}\nConfidence: ${res.data.confidence}\nTags: ${(res.data.tags || []).join(', ') || '(none)'}\nProperties: ${JSON.stringify(res.data.properties || {})}` }],
+        details: res.data,
+      };
+    },
+  });
+
+  // ── entity_connect: Link two entities ─────────────────
+  api.registerTool({
+    name: 'entity_connect',
+    label: 'Entity Connect',
+    description: 'Create a directed link between two entities in the knowledge graph. Use this to record relationships you discover between concepts, people, or things.',
+    promptSnippet: 'Link two entities with a relationship in the knowledge graph',
+    promptGuidelines: [
+      'Use entity_connect to create a relationship link between two entities in the knowledge graph.',
+      'Choose the link_type that best describes the relationship: ref (reference/association), dep (dependency), con (contradiction), or evidence (supporting evidence).',
+      'Both entities should already exist in memory (created via memory_store or memory_ingest). Create them first if needed.',
+    ],
+    parameters: Type.Object({
+      from: Type.String({ description: 'Source entity label' }),
+      to: Type.String({ description: 'Target entity label' }),
+      link_type: Type.Optional(Type.String({ description: 'Link type: ref (reference), dep (dependency), con (contradiction), evidence (supporting evidence). Default: ref' })),
     }),
     execute: async (_id, params) => {
       const res = await ilo.connect(params.from, params.to, params.link_type || 'ref');
@@ -110,14 +181,46 @@ export function registerIloTools(api: ExtensionAPI): void {
     },
   });
 
-  // ── forget: Deprecate a stored claim/entity ────────
+  // ── entity_update: Update entity properties ───────────
   api.registerTool({
-    name: 'forget',
-    label: 'Forget',
-    description: 'Deprecate or remove a stored entity or claim by marking it as forgotten.',
+    name: 'entity_update',
+    label: 'Entity Update',
+    description: 'Update an existing entity\'s properties, tags, or confidence. Use to correct or enrich stored information.',
+    promptSnippet: 'Update an entity\'s properties, tags, or confidence',
+    promptGuidelines: [
+      'Use entity_update to modify an existing entity\'s properties (like status, priority) or add/change tags.',
+      'To remove/forget an entity entirely, use entity_forget instead.',
+      'Always check if the entity exists first with entity_lookup before updating.',
+    ],
     parameters: Type.Object({
-      content: Type.String({ description: 'The fact text to deprecate' }),
-      entity: Type.Optional(Type.String({ description: 'Entity the claim is about' })),
+      name: Type.String({ description: 'Entity label to update (case-insensitive)' }),
+      properties: Type.Record(Type.String(), Type.Any(), { description: 'Key-value properties to set on the entity' }),
+      tags: Type.Optional(Type.Array(Type.String(), { description: 'Replace the entity\'s tags with this new list' })),
+      confidence: Type.Optional(Type.Number({ description: 'New confidence level 0.0 to 1.0' })),
+    }),
+    execute: async (_id, params) => {
+      const res = await ilo.entityUpdate(params.name, params.properties, params.tags);
+      if (!res.ok) {
+        return { content: [{ type: 'text', text: `Update failed: ${res.error}` }], details: {} as any };
+      }
+      return { content: [{ type: 'text', text: `Updated entity "${params.name}". Created: ${res.data?.created}` }], details: res.data || {} };
+    },
+  });
+
+  // ── entity_forget: Forget an entity ───────────────────
+  api.registerTool({
+    name: 'entity_forget',
+    label: 'Entity Forget',
+    description: 'Mark an entity as forgotten/deprecated in the knowledge graph. The entity and its claims are preserved but flagged so they no longer appear in normal memory_search results.',
+    promptSnippet: 'Deprecate or remove a stored entity from active memory',
+    promptGuidelines: [
+      'Use entity_forget when the user wants to delete, remove, or correct a previously stored fact or entity.',
+      'This marks the entity as forgotten rather than deleting it, so the information is preserved but excluded from normal searches.',
+      'To just update an entity\'s properties instead, use entity_update.',
+    ],
+    parameters: Type.Object({
+      content: Type.String({ description: 'The fact or claim text to deprecate' }),
+      entity: Type.Optional(Type.String({ description: 'Entity label the claim is about (default: "general")' })),
     }),
     execute: async (_id, params) => {
       const entity = params.entity || 'general';
@@ -129,25 +232,39 @@ export function registerIloTools(api: ExtensionAPI): void {
     },
   });
 
-  // ── project_tree: Live directory structure ──────────
+  // ═══════════════════════════════════════════════════════════════
+  // WEB TOOLS — internet access
+  // ═══════════════════════════════════════════════════════════════
+  // (web_search, web_scrape, web_crawl are registered in tools/*.ts)
+
+  // ═══════════════════════════════════════════════════════════════
+  // PROJECT TOOLS
+  // ═══════════════════════════════════════════════════════════════
+
+  // ── project_tree: Directory structure ─────────────────
   api.registerTool({
     name: 'project_tree',
     label: 'Project Tree',
-    description: 'Show the current project directory tree. Filters out build artifacts and dependencies.',
+    description: 'Show the current project directory tree. Filters out build artifacts (target, node_modules, .git) so you can see the project structure clearly.',
+    promptSnippet: 'Show the project directory tree (filters build artifacts)',
+    promptGuidelines: [
+      'Use project_tree when you need to understand the project structure, find file locations, or navigate the codebase.',
+      'The output filters out target/, node_modules/, .git/, and rust-projects/ to keep the view focused on source files.',
+    ],
     parameters: Type.Object({
-      depth: Type.Optional(Type.Number({ description: 'Max directory depth (default 3)' })),
+      depth: Type.Optional(Type.Number({ description: 'Max directory depth (default 3). Increase for deeper exploration.' })),
     }),
     execute: async (_id, params) => {
       const depth = params.depth ?? 3;
       try {
         const root = process.cwd();
         const { stdout } = await asyncExec(
-          `find . -maxdepth ${depth} -not -path '*/target/*' -not -path '*/node_modules/*' -not -path '*/.git/*' -not -path '*/rust-projects/*' | sort`,
+          'find . -maxdepth ' + depth + " -not -path '*/target/*' -not -path '*/node_modules/*' -not -path '*/.git/*' -not -path '*/rust-projects/*' | sort",
           { cwd: root, timeout: 5000 }
         );
         return { content: [{ type: 'text', text: stdout }], details: { depth } };
       } catch (err: any) {
-        return { content: [{ type: 'text', text: `Failed to get tree: ${err.message}` }], details: {} as any };
+        return { content: [{ type: 'text', text: 'Failed to get tree: ' + err.message }], details: {} as any };
       }
     },
   });
@@ -156,7 +273,12 @@ export function registerIloTools(api: ExtensionAPI): void {
   api.registerTool({
     name: 'git_snapshot',
     label: 'Git Snapshot',
-    description: 'Show current git branch, status, and recent commits.',
+    description: 'Show current git branch, status, and recent commits. Provides a quick overview of the repository state before making changes.',
+    promptSnippet: 'Show current git branch, status, and recent commits',
+    promptGuidelines: [
+      'Use git_snapshot before making changes to understand the current git state.',
+      'Use git_commit after making meaningful progress to save changes.',
+    ],
     parameters: Type.Object({}),
     execute: async (_id, _params) => {
       try {
@@ -171,17 +293,17 @@ export function registerIloTools(api: ExtensionAPI): void {
         const log = logRes.stdout.trim();
 
         const lines = [
-          `Branch: ${branch}`,
+          'Branch: ' + branch,
           '',
-          '── Status ──',
+          '-- Status --',
           status || '(clean)',
           '',
-          '── Recent Commits ──',
+          '-- Recent Commits --',
           log,
         ];
         return { content: [{ type: 'text', text: lines.join('\n') }], details: { branch } };
       } catch (err: any) {
-        return { content: [{ type: 'text', text: `Git error: ${err.message}` }], details: {} as any };
+        return { content: [{ type: 'text', text: 'Git error: ' + err.message }], details: {} as any };
       }
     },
   });
@@ -190,9 +312,15 @@ export function registerIloTools(api: ExtensionAPI): void {
   api.registerTool({
     name: 'git_commit',
     label: 'Git Commit',
-    description: 'Stage all changes and commit with a generated message.',
+    description: 'Stage all changes and commit with a generated message. If no message is provided, one is generated from the diff.',
+    promptSnippet: 'Stage all changes and commit',
+    promptGuidelines: [
+      'Use git_commit after making meaningful progress to save changes to the repository.',
+      'Run git_snapshot first to review what will be committed.',
+      'You can provide an optional commit message, or leave it blank to auto-generate one from the diff.',
+    ],
     parameters: Type.Object({
-      message: Type.Optional(Type.String({ description: 'Optional override message. If omitted, generated from diff.' })),
+      message: Type.Optional(Type.String({ description: 'Optional override commit message. If omitted, one is generated from the diff.' })),
     }),
     execute: async (_id, params) => {
       try {
@@ -215,19 +343,19 @@ export function registerIloTools(api: ExtensionAPI): void {
           const files = hasChanges.split('\n').map(l => l.trim()).filter(Boolean);
           const firstFile = files[0]?.split('|')[0]?.trim() || '';
           fileCount = files.length;
-          message = `update: ${fileCount} file${fileCount > 1 ? 's' : ''} changed (${firstFile}${fileCount > 1 ? ', ...' : ''})`;
+          message = 'update: ' + fileCount + ' file' + (fileCount > 1 ? 's' : '') + ' changed (' + firstFile + (fileCount > 1 ? ', ...' : '') + ')';
         }
 
         // Commit
-        await asyncExec(`git commit -m "${message.replace(/"/g, '\\"')}"`, { cwd: root, timeout: GIT_TIMEOUT });
+        await asyncExec('git commit -m "' + message.replace(/"/g, '\\"') + '"', { cwd: root, timeout: GIT_TIMEOUT });
         const { stdout: sha } = await asyncExec('git rev-parse --short HEAD', { cwd: root, timeout: 5000 });
 
         return {
-          content: [{ type: 'text', text: `Committed ${sha}: ${message}` }],
+          content: [{ type: 'text', text: 'Committed ' + sha + ': ' + message }],
           details: { sha, message, files: fileCount } as any,
         };
       } catch (err: any) {
-        return { content: [{ type: 'text', text: `Commit failed: ${err.message}` }], details: {} as any };
+        return { content: [{ type: 'text', text: 'Commit failed: ' + err.message }], details: {} as any };
       }
     },
   });
