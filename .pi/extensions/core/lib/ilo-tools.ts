@@ -7,6 +7,8 @@
 
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
+import { execSync } from 'node:child_process';
+import * as path from 'node:path';
 import { ilo } from './ilo-client';
 
 export function registerIloTools(api: ExtensionAPI): void {
@@ -80,6 +82,106 @@ export function registerIloTools(api: ExtensionAPI): void {
       const entity = params.entity || 'general';
       await ilo.entityUpdate(entity, { forgotten: true });
       return { content: [{ type: 'text', text: `Deprecated belief about ${entity}.` }], details: { entity } };
+    },
+  });
+
+  // ── project_tree: Live directory structure ──────────
+  api.registerTool({
+    name: 'project_tree',
+    label: 'Project Tree',
+    description: 'Show the current project directory tree. Filters out build artifacts and dependencies.',
+    parameters: Type.Object({
+      depth: Type.Optional(Type.Number({ description: 'Max directory depth (default 3)' })),
+    }),
+    execute: async (_id, params) => {
+      const depth = params.depth ?? 3;
+      try {
+        const root = process.cwd();
+        const tree = execSync(`find . -maxdepth ${depth} -not -path '*/target/*' -not -path '*/node_modules/*' -not -path '*/.git/*' -not -path '*/rust-projects/*' | sort`, {
+          cwd: root,
+          encoding: 'utf-8',
+          timeout: 5000,
+        });
+        return { content: [{ type: 'text', text: tree }], details: { depth } };
+      } catch (err: any) {
+        return { content: [{ type: 'text', text: `Failed to get tree: ${err.message}` }], details: {} };
+      }
+    },
+  });
+
+  // ── git_snapshot: Current git state ─────────────────
+  api.registerTool({
+    name: 'git_snapshot',
+    label: 'Git Snapshot',
+    description: 'Show current git branch, status, and recent commits.',
+    parameters: Type.Object({}),
+    execute: async (_id, _params) => {
+      try {
+        const root = process.cwd();
+        const opts = { cwd: root, encoding: 'utf-8' as const, timeout: 5000 };
+        const branch = execSync('git branch --show-current 2>/dev/null || echo "(no branch)"', opts).trim();
+        const status = execSync('git status --short 2>/dev/null || echo "(not a git repo)"', opts).trim();
+        const log = execSync('git log --oneline -5 2>/dev/null || echo "(no commits)"', opts).trim();
+
+        const lines = [
+          `Branch: ${branch}`,
+          '',
+          '── Status ──',
+          status || '(clean)',
+          '',
+          '── Recent Commits ──',
+          log,
+        ];
+        return { content: [{ type: 'text', text: lines.join('\n') }], details: { branch } };
+      } catch (err: any) {
+        return { content: [{ type: 'text', text: `Git error: ${err.message}` }], details: {} };
+      }
+    },
+  });
+
+  // ── git_commit: Stage + commit with auto message ────
+  api.registerTool({
+    name: 'git_commit',
+    label: 'Git Commit',
+    description: 'Stage all changes and commit with a generated message.',
+    parameters: Type.Object({
+      message: Type.Optional(Type.String({ description: 'Optional override message. If omitted, generated from diff.' })),
+    }),
+    execute: async (_id, params) => {
+      try {
+        const root = process.cwd();
+        const opts = { cwd: root, encoding: 'utf-8' as const, timeout: 10000 };
+
+        // Stage all
+        execSync('git add -A', opts);
+
+        // Check if anything to commit
+        const hasChanges = execSync('git diff --cached --stat 2>/dev/null', opts).trim();
+        if (!hasChanges) {
+          return { content: [{ type: 'text', text: 'Nothing to commit — working tree clean.' }], details: {} };
+        }
+
+        // Generate message from diff if not provided
+        let message = params.message;
+        if (!message) {
+          const diff = execSync('git diff --cached --no-color | head -100', opts);
+          const files = hasChanges.split('\n').map(l => l.trim()).filter(Boolean);
+          const firstFile = files[0]?.split('|')[0]?.trim() || '';
+          const fileCount = files.length;
+          message = `update: ${fileCount} file${fileCount > 1 ? 's' : ''} changed (${firstFile}${fileCount > 1 ? ', ...' : ''})`;
+        }
+
+        // Commit
+        execSync(`git commit -m "${message.replace(/"/g, '\\"')}"`, opts);
+        const sha = execSync('git rev-parse --short HEAD', opts).trim();
+
+        return {
+          content: [{ type: 'text', text: `Committed ${sha}: ${message}` }],
+          details: { sha, message, files: fileCount },
+        };
+      } catch (err: any) {
+        return { content: [{ type: 'text', text: `Commit failed: ${err.message}` }], details: {} };
+      }
     },
   });
 }

@@ -12,6 +12,26 @@ import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { ilo } from '../lib/ilo-client';
 import { getState } from './turn';
 
+// ── Project context (injected once per session) ─────
+
+const PROJECT_OVERVIEW = `
+This project is **ILO** — a cognitive memory runtime for coding agents.
+It has two parts:
+
+1. **mem-arch/** — Rust sidecar (graph memory, embeddings, PPR retrieval)
+2. **.pi/extensions/core/** — Pi coding agent extension (TypeScript)
+
+Available tools for navigating project:
+- \`project_tree\` — show live directory structure
+- \`git_snapshot\` — show branch, status, recent commits
+- \`git_commit\` — stage + commit with auto-generated message
+
+Git workflow: commit after meaningful changes. Use \`git_snapshot\`
+before and after to verify state.
+`;
+
+let PROJECT_HINT_INJECTED = false;
+
 
 
 // ═══════════════════════════════════════════════════════════
@@ -22,6 +42,12 @@ export function registerContextHooks(pi: ExtensionAPI): void {
   pi.on('before_agent_start', async (event: any, ctx: any) => {
     const state = getState();
     const userText = state.lastUserText;
+
+    // Inject project hint once per session (before ILO context)
+    if (!PROJECT_HINT_INJECTED && ctx.addSystemPrompt) {
+      ctx.addSystemPrompt(PROJECT_OVERVIEW);
+      PROJECT_HINT_INJECTED = true;
+    }
 
     // Skip retrieval for very short inputs
     if (!userText || userText.length < 10) return;
