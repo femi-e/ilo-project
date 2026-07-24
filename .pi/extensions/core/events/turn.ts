@@ -102,7 +102,7 @@ export function registerTurnHooks(pi: ExtensionAPI): void {
     }
   });
 
-  pi.on('session_end', async (_event: any, ctx: any) => {
+  (pi as any).on('session_end', async (_event: any, ctx: any) => {
     if (ctx?.ui) ctx.ui.setStatus('ilo', undefined);
   });
 }

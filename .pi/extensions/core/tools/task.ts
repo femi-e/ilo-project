@@ -42,10 +42,10 @@ export function registerTaskTool(api: ExtensionAPI): void {
           case 'create': return await createTask(params);
           case 'update': return await updateTask(params);
           case 'list': return await listTasks();
-          default: return { content: [{ type: 'text', text: 'Unknown action. Use create, update, or list.' }], details: {} };
+          default: return { content: [{ type: 'text' as const, text: 'Unknown action. Use create, update, or list.' }], details: {} as any };
         }
       } catch (err: any) {
-        return { content: [{ type: 'text', text: 'Task failed: ' + err.message }], details: {} };
+        return { content: [{ type: 'text' as const, text: 'Task failed: ' + err.message }], details: {} as any };
       }
     },
   });
@@ -53,7 +53,7 @@ export function registerTaskTool(api: ExtensionAPI): void {
 
 async function createTask(params: any) {
   const title = (params.title || '').trim();
-  if (!title) return { content: [{ type: 'text', text: 'Task title is required.' }], details: {} };
+  if (!title) return { content: [{ type: 'text' as const, text: 'Task title is required.' }], details: {} as any };
 
   const status = params.status || 'active';
   const tags = ['task'];
@@ -72,28 +72,28 @@ async function createTask(params: any) {
 
   const parentNote = params.parent ? ' (under ' + params.parent + ')' : '';
   return {
-    content: [{ type: 'text', text: 'Created task: ' + title + ' [' + status + ']' + parentNote }],
+    content: [{ type: 'text' as const, text: 'Created task: ' + title + ' [' + status + ']' + parentNote }],
     details: { title, status, priority: params.priority, parent: params.parent },
   };
 }
 
 async function updateTask(params: any) {
   const taskTitle = (params.task || '').trim();
-  if (!taskTitle) return { content: [{ type: 'text', text: 'Task title is required.' }], details: {} };
+  if (!taskTitle) return { content: [{ type: 'text' as const, text: 'Task title is required.' }], details: {} as any };
 
   const properties: Record<string, any> = {};
   if (params.status) properties.status = params.status;
   if (params.priority) properties.priority = params.priority;
 
   if (Object.keys(properties).length === 0) {
-    return { content: [{ type: 'text', text: 'Nothing to update. Specify status or priority.' }], details: {} };
+    return { content: [{ type: 'text' as const, text: 'Nothing to update. Specify status or priority.' }], details: {} as any };
   }
 
   await ilo.entityUpdate(taskTitle, properties);
 
   const changes = Object.entries(properties).map(([k, v]) => k + '=' + v).join(', ');
   return {
-    content: [{ type: 'text', text: 'Updated ' + taskTitle + ': ' + changes }],
+    content: [{ type: 'text' as const, text: 'Updated ' + taskTitle + ': ' + changes }],
     details: { task: taskTitle, changes: properties },
   };
 }
@@ -101,7 +101,7 @@ async function updateTask(params: any) {
 async function listTasks() {
   const taskRes = await ilo.search('tasks', true);
   if (taskRes.ok && taskRes.data?.context) {
-    return { content: [{ type: 'text', text: taskRes.data.context }], details: { total: taskRes.data.total } };
+    return { content: [{ type: 'text' as const, text: taskRes.data.context }], details: { total: taskRes.data.total } };
   }
-  return { content: [{ type: 'text', text: 'No tasks found.' }], details: {} };
+  return { content: [{ type: 'text' as const, text: 'No tasks found.' }], details: {} as any };
 }

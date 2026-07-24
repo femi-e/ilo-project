@@ -21,7 +21,7 @@ export function registerWebCrawlTool(api: ExtensionAPI): void {
       const limit = Math.min(params.limit || 10, 50);
       try {
         const pages = await crawlSite(params.url, depth, limit);
-        if (pages.length === 0) return { content: [{ type: 'text', text: 'No pages found.' }], details: {} };
+        if (pages.length === 0) return { content: [{ type: 'text', text: 'No pages found.' }], details: {} as any };
 
         const summary = [`Crawled ${pages.length} pages from ${params.url}:\n`];
         for (const p of pages) {
@@ -31,7 +31,7 @@ export function registerWebCrawlTool(api: ExtensionAPI): void {
         }
         return { content: [{ type: 'text', text: summary.join('\n') }], details: { total: pages.length } };
       } catch (err: any) {
-        return { content: [{ type: 'text', text: `Crawl failed: ${err.message}` }], details: {} };
+        return { content: [{ type: 'text', text: `Crawl failed: ${err.message}` }], details: {} as any };
       }
     },
   });

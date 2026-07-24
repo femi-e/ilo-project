@@ -93,7 +93,7 @@ class IloClient {
 
   /** Health check — returns version and DB status. */
   async status() {
-    return this.request<{ status: string; version: string; db_connected: boolean }>('GET', '/status');
+    return this.request<{ status: string; version: string; db_connected: boolean; uptime_secs: number }>('GET', '/status');
   }
 
   /** Extract entities and claims from raw text. */

@@ -8,7 +8,7 @@ import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { setCurrentUserText } from './turn';
 
 export function registerInputHooks(pi: ExtensionAPI): void {
-  pi.on('input', async ({ content }) => {
-    setCurrentUserText(content || '');
+  pi.on('input', async (event: any) => {
+    setCurrentUserText(event?.content || '');
   });
 }

@@ -20,7 +20,7 @@ export function registerWebScrapeTool(api: ExtensionAPI): void {
         const header = `Title: ${page.title || '(no title)'}\nURL: ${page.url}\nChars: ${page.chars}\n\n`;
         return { content: [{ type: 'text', text: header + page.content }], details: { title: page.title, chars: page.chars } };
       } catch (err: any) {
-        return { content: [{ type: 'text', text: `Failed to fetch ${params.url}: ${err.message}` }], details: {} };
+        return { content: [{ type: 'text', text: `Failed to fetch ${params.url}: ${err.message}` }], details: {} as any };
       }
     },
   });

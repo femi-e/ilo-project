@@ -14,6 +14,11 @@ import { ilo } from './ilo-client';
 const asyncExec = promisify(exec);
 const GIT_TIMEOUT = 10000;
 
+// Helper to create error responses with type-safe details
+function toolError(msg: string) {
+  return { content: [{ type: 'text' as const, text: msg }], details: {} as any };
+}
+
 export function registerIloTools(api: ExtensionAPI): void {
   // ── search: Search memory ───────────────────────────
   api.registerTool({
@@ -27,8 +32,8 @@ export function registerIloTools(api: ExtensionAPI): void {
     }),
     execute: async (_id, params) => {
       const res = await ilo.search(params.query, params.list, params.tag);
-      if (!res.ok) return { content: [{ type: 'text', text: `Search failed: ${res.error}` }], details: {} };
-      if (!res.data?.context) return { content: [{ type: 'text', text: 'No results found.' }], details: {} };
+      if (!res.ok) return { content: [{ type: 'text', text: `Search failed: ${res.error}` }], details: {} as any };
+      if (!res.data?.context) return { content: [{ type: 'text', text: 'No results found.' }], details: {} as any };
       return { content: [{ type: 'text', text: res.data.context }], details: { total: res.data.total } };
     },
   });
@@ -45,7 +50,7 @@ export function registerIloTools(api: ExtensionAPI): void {
     }),
     execute: async (_id, params) => {
       const content = (params.content || '').trim();
-      if (!content) return { content: [{ type: 'text', text: 'No content provided.' }], details: {} };
+      if (!content) return { content: [{ type: 'text', text: 'No content provided.' }], details: {} as any };
       const entity = params.entity || 'general';
       const conf = params.confidence ?? 0.5;
 
@@ -73,7 +78,7 @@ export function registerIloTools(api: ExtensionAPI): void {
     }),
     execute: async (_id, params) => {
       const res = await ilo.ingest(params.content, params.source, params.tags);
-      if (!res.ok) return { content: [{ type: 'text', text: `Ingest failed: ${res.error}` }], details: {} };
+      if (!res.ok) return { content: [{ type: 'text', text: `Ingest failed: ${res.error}` }], details: {} as any };
       return {
         content: [{ type: 'text', text: `Ingested ${res.data?.entities_created || 0} entities and ${res.data?.claims_created || 0} claims from ${params.source}.` }],
         details: res.data || {},
@@ -131,7 +136,7 @@ export function registerIloTools(api: ExtensionAPI): void {
         );
         return { content: [{ type: 'text', text: stdout }], details: { depth } };
       } catch (err: any) {
-        return { content: [{ type: 'text', text: `Failed to get tree: ${err.message}` }], details: {} };
+        return { content: [{ type: 'text', text: `Failed to get tree: ${err.message}` }], details: {} as any };
       }
     },
   });
@@ -165,7 +170,7 @@ export function registerIloTools(api: ExtensionAPI): void {
         ];
         return { content: [{ type: 'text', text: lines.join('\n') }], details: { branch } };
       } catch (err: any) {
-        return { content: [{ type: 'text', text: `Git error: ${err.message}` }], details: {} };
+        return { content: [{ type: 'text', text: `Git error: ${err.message}` }], details: {} as any };
       }
     },
   });
@@ -188,16 +193,17 @@ export function registerIloTools(api: ExtensionAPI): void {
         // Check if anything to commit
         const { stdout: hasChanges } = await asyncExec('git diff --cached --stat 2>/dev/null', { cwd: root, timeout: 5000 });
         if (!hasChanges.trim()) {
-          return { content: [{ type: 'text', text: 'Nothing to commit — working tree clean.' }], details: {} };
+          return { content: [{ type: 'text', text: 'Nothing to commit — working tree clean.' }], details: {} as any };
         }
 
         // Generate message from diff if not provided
         let message = params.message;
+        let fileCount = 0;
         if (!message) {
           const { stdout: diff } = await asyncExec('git diff --cached --no-color | head -100', { cwd: root, timeout: 5000 });
           const files = hasChanges.split('\n').map(l => l.trim()).filter(Boolean);
           const firstFile = files[0]?.split('|')[0]?.trim() || '';
-          const fileCount = files.length;
+          fileCount = files.length;
           message = `update: ${fileCount} file${fileCount > 1 ? 's' : ''} changed (${firstFile}${fileCount > 1 ? ', ...' : ''})`;
         }
 
@@ -207,10 +213,10 @@ export function registerIloTools(api: ExtensionAPI): void {
 
         return {
           content: [{ type: 'text', text: `Committed ${sha}: ${message}` }],
-          details: { sha, message, files: fileCount },
+          details: { sha, message, files: fileCount } as any,
         };
       } catch (err: any) {
-        return { content: [{ type: 'text', text: `Commit failed: ${err.message}` }], details: {} };
+        return { content: [{ type: 'text', text: `Commit failed: ${err.message}` }], details: {} as any };
       }
     },
   });
