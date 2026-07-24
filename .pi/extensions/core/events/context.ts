@@ -12,25 +12,42 @@ import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { ilo } from '../lib/ilo-client';
 import { getState } from './turn';
 
-// ── Project context (injected once per session) ─────
+// ── System instructions (injected once per session) ──
 
-const PROJECT_OVERVIEW = `
-This project is **ILO** — a cognitive memory runtime for coding agents.
-It has two parts:
+const SYSTEM_INSTRUCTIONS = `
+## Project Context
 
-1. **mem-arch/** — Rust sidecar (graph memory, embeddings, PPR retrieval)
-2. **.pi/extensions/core/** — Pi coding agent extension (TypeScript)
+You are working in the **ILO** project — a cognitive memory runtime for coding agents.
+The project has two layers:
 
-Available tools for navigating project:
-- \`project_tree\` — show live directory structure
-- \`git_snapshot\` — show branch, status, recent commits
-- \`git_commit\` — stage + commit with auto-generated message
+### Rust sidecar (mem-arch/)
+Graph memory database with semantic retrieval. Runs as a sidecar process.
+- 10 HTTP endpoints over Unix socket
+- PPR graph traversal for associative recall
+- BGE-base embeddings via Candle (768-dim, local CPU)
+- Hebbian learning loop with wall-clock decay
 
-Git workflow: commit after meaningful changes. Use \`git_snapshot\`
-before and after to verify state.
+### Pi extension (.pi/extensions/core/)
+TypeScript extension that integrates ILO into pi's turn lifecycle.
+- Hooks into before_agent_start and turn_end
+- Orchestrates: extract → embed → recall → LLM → learn → store
+
+### Available Tools
+- \`project_tree\` — Show live directory structure (always up-to-date)
+- \`git_snapshot\` — Show current git branch, status, recent commits
+- \`git_commit\` — Stage all changes and commit (auto-generates message)
+- \`store\` — Store a belief in long-term memory
+- \`entity_lookup\` — Look up a known entity in the knowledge graph
+- \`connect\` — Link two entities in the knowledge graph
+
+### Workflow
+1. Before changing code, use \`git_snapshot\` to see current state
+2. After meaningful changes, use \`git_commit\` to save work
+3. Use \`project_tree\` when you need to understand file locations
+4. Memory from previous sessions is automatically available
 `;
 
-let PROJECT_HINT_INJECTED = false;
+let SYSTEM_HINT_INJECTED = false;
 
 
 
@@ -43,10 +60,10 @@ export function registerContextHooks(pi: ExtensionAPI): void {
     const state = getState();
     const userText = state.lastUserText;
 
-    // Inject project hint once per session (before ILO context)
-    if (!PROJECT_HINT_INJECTED && ctx.addSystemPrompt) {
-      ctx.addSystemPrompt(PROJECT_OVERVIEW);
-      PROJECT_HINT_INJECTED = true;
+    // Inject system instructions once per session
+    if (!SYSTEM_HINT_INJECTED && ctx.addSystemPrompt) {
+      ctx.addSystemPrompt(SYSTEM_INSTRUCTIONS);
+      SYSTEM_HINT_INJECTED = true;
     }
 
     // Skip retrieval for very short inputs
