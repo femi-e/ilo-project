@@ -52,9 +52,22 @@ export async function startIlo(): Promise<boolean> {
     stopIlo();
   }
 
-  // Kill any stale mem-arch processes holding DB locks (SIGKILL to be sure)
-  try { execSync('pkill -9 -f "mem-arch" 2>/dev/null || true'); } catch {}
-  await new Promise((r) => setTimeout(r, 1500));
+  // Kill any stale mem-arch processes holding DB locks
+  try {
+    execSync('pkill -9 -f "mem-arch" 2>/dev/null || true');
+    // Wait for ALL mem-arch processes to die (kernel must release flock)
+    for (let i = 0; i < 20; i++) {
+      try {
+        execSync('pgrep -f "mem-arch" 2>/dev/null', { stdio: 'ignore' });
+        await new Promise((r) => setTimeout(r, 200));
+      } catch {
+        break; // no more matching processes
+      }
+    }
+  } catch {}
+
+  // Remove stale socket
+  try { execSync(`rm -f ${ILO_SOCKET}`); } catch {}
 
   // Ensure var/ directory exists
   const varDir = path.dirname(ILO_DB_PATH);
@@ -69,11 +82,13 @@ export async function startIlo(): Promise<boolean> {
       ILO_MAX_UPTIME,
       RUST_LOG: process.env.RUST_LOG || 'info',
     },
+    cwd: path.dirname(ILO_BINARY),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
   state.process = proc;
   state.startedAt = Date.now();
+  console.error('[ilo] starting sidecar...');
 
   proc.stdout?.on('data', (d) => process.stdout.write(`[ilo] ${d}`));
   proc.stderr?.on('data', (d) => process.stderr.write(`[ilo] ${d}`));
