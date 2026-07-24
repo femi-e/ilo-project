@@ -10,6 +10,7 @@
 import * as crypto from 'node:crypto';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { ilo } from '../lib/ilo-client';
+import { isIloHealthy } from '../lib/ilo-manager';
 
 // ── In-memory state (survives /reload) ────────────────
 
@@ -19,12 +20,13 @@ interface TurnState {
   lastUserText: string;
   turnCount: number;
   sessionId: string;
+  healthy: boolean;
 }
 
 export function getState(): TurnState {
   let state = (globalThis as any)[STATE_KEY];
   if (!state) {
-    state = { lastUserText: '', turnCount: 0, sessionId: 'default' };
+    state = { lastUserText: '', turnCount: 0, sessionId: 'default', healthy: false };
     (globalThis as any)[STATE_KEY] = state;
   }
   return state;
@@ -40,16 +42,26 @@ export function setCurrentUserText(text: string): void {
 // ═══════════════════════════════════════════════════════════
 
 export function registerTurnHooks(pi: ExtensionAPI): void {
-  pi.on('session_start', async () => {
+  pi.on('session_start', async (_event: any, ctx: any) => {
     const state = getState();
     state.turnCount = 0;
     state.sessionId = crypto.randomUUID?.() || Date.now().toString(36);
-    // Warm up ILO (non-blocking)
-    ilo.status().catch(() => {});
+
+    // Show ILO startup status
+    const healthy = await isIloHealthy();
+    state.healthy = healthy;
+    if (healthy && ctx?.ui) {
+      ctx.ui.setStatus('ilo', ctx.ui.theme.fg('success', '● ILO'));
+      ctx.ui.notify('ILO memory layer connected', 'info');
+    } else if (ctx?.ui) {
+      ctx.ui.setStatus('ilo', ctx.ui.theme.fg('error', '✖ ILO offline'));
+      ctx.ui.notify('ILO memory layer unavailable', 'error');
+    }
   });
 
-  pi.on('turn_end', async ({ turn }) => {
+  pi.on('turn_end', async (event: any, ctx: any) => {
     const state = getState();
+    const turn = event?.turn || event;
     const userText = state.lastUserText;
     const responseText = turn?.response || turn?.text || '';
 
@@ -59,6 +71,8 @@ export function registerTurnHooks(pi: ExtensionAPI): void {
       // Step 1: Extract entities and claims from the full turn
       const fullText = `${userText}\n${responseText}`;
       const extract = await ilo.extract(fullText);
+      const entityCount = extract.data?.entities?.length || 0;
+      const claimCount = extract.data?.claims?.length || 0;
 
       // Step 2: Determine which entities were used (learning signal)
       const usedLabels = (extract.data?.entities || [])
@@ -66,7 +80,6 @@ export function registerTurnHooks(pi: ExtensionAPI): void {
         .map((e: any) => e.name);
 
       if (usedLabels.length > 0) {
-        // Step 3: Signal learning
         await ilo.learn({
           query: userText,
           responseText,
@@ -75,7 +88,7 @@ export function registerTurnHooks(pi: ExtensionAPI): void {
         }).catch(() => {});
       }
 
-      // Step 4: Store the turn
+      // Step 3: Store the turn
       await ilo.remember({
         query: userText,
         response: responseText,
@@ -84,14 +97,17 @@ export function registerTurnHooks(pi: ExtensionAPI): void {
         sessionId: state.sessionId,
         turnIndex: state.turnCount++,
       }).catch(() => {});
+
+      // Notify on memory activity (first few turns)
+      if (state.turnCount <= 3 && (entityCount > 0 || claimCount > 0) && ctx?.ui) {
+        ctx.ui.notify(`Memory: ${entityCount} entities, ${claimCount} claims`, 'info');
+      }
     } catch (err) {
       console.error('[ilo-turn] failed:', err);
-      // Non-fatal — agent continues without memory
     }
   });
 
-  pi.on('session_end', async () => {
-    // ILO auto-shuts down via ILO_MAX_UPTIME timer
-    // No cleanup needed here
+  pi.on('session_end', async (_event: any, ctx: any) => {
+    if (ctx?.ui) ctx.ui.setStatus('ilo', undefined);
   });
 }

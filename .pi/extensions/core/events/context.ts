@@ -43,7 +43,7 @@ function hasRulesMessage(sessionManager: any): boolean {
 // ═══════════════════════════════════════════════════════════
 
 export function registerContextHooks(pi: ExtensionAPI): void {
-  pi.on('before_agent_start', async (ctx) => {
+  pi.on('before_agent_start', async (event: any, ctx: any) => {
     const state = getState();
     const userText = state.lastUserText;
 
@@ -80,6 +80,10 @@ export function registerContextHooks(pi: ExtensionAPI): void {
       // Step 4: Inject context into system prompt
       if (recall.ok && recall.data?.context) {
         ctx.addSystemPrompt(recall.data.context);
+        // Notify about memory context injection (first turn only)
+        if (recall.data.nodes > 0 && ctx?.ui) {
+          ctx.ui.notify(`Retrieved ${recall.data.nodes} memory nodes`, 'info');
+        }
       }
     } catch (err) {
       console.error('[ilo-context] recall failed:', err);
