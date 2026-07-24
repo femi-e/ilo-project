@@ -1,26 +1,21 @@
 // ============================================================================
-// events/context.ts — before_agent_start handler
+// events/context.ts — before_agent_start handler (ILO-powered)
 // ============================================================================
-// Hybrid context injection:
-//   - Tier 1: Universal rules (message — once, persistent)
-//   - Tier 2+3: Mode rules + entity knowledge (systemPrompt — every turn)
-//
-// Guard check prevents duplicate message injection across turns and /reload.
-// Budget-aware: respects ctx.getContextUsage() to avoid pushing over limits.
+// On each turn before the LLM call:
+//   1. Extract entities from the user's prompt
+//   2. Embed the query for vector search
+//   3. Recall context from ILO (FTS + vector + PPR + graph traversal)
+//   4. Inject context into the system prompt
 // ============================================================================
 
-import type { ExtensionAPI, SessionManager } from '@earendil-works/pi-coding-agent';
-import { buildContext, composeContextString, readConfig } from '../lib/context';
-import { hasEngine } from '../lib/engine';
-import { getDb } from '../lib/engine';
-import { classify } from '../lib/classifier';
-import { MODES, getCurrentMode, transitionTo, getAllowedTools } from '../lib/modes';
-import type { ModeId } from '../lib/modes';
+import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import { ilo } from '../lib/ilo-client';
+import { getState } from './turn';
+
+// ── Processor injection rules (kept from original) ────
 
 const UNIVERSAL_RULES_CUSTOM_TYPE = 'ailo-core';
-const RULES_VERSION = 1; // Bump to force re-injection
-
-// ── Universal rules text (Tier 1) ──────────────────────
+const RULES_VERSION = 1;
 
 const UNIVERSAL_RULES_TEXT = [
   '### Ailo — Core Behavior Rules',
@@ -34,146 +29,61 @@ const UNIVERSAL_RULES_TEXT = [
   '---',
 ].join('\n');
 
-// ── Guard check ─────────────────────────────────────────
-
-/**
- * Check if the universal rules message already exists in the session.
- * Scans the session branch for our customType.
- */
-function hasRulesMessage(sessionManager: SessionManager): boolean {
+function hasRulesMessage(sessionManager: any): boolean {
   try {
     const entries = sessionManager.getBranch();
-    return entries.some(
-      (e: any) => e.type === 'custom' && e.customType === UNIVERSAL_RULES_CUSTOM_TYPE
-    );
+    return entries.some((e: any) => e.type === 'custom' && e.customType === UNIVERSAL_RULES_CUSTOM_TYPE);
   } catch {
     return false;
   }
 }
 
-// ── Config defaults (cached per-session) ────────────────
-
-let configCache: Record<string, string> | null = null;
-
-async function refreshConfigCache(): Promise<Record<string, string>> {
-  try {
-    const db = getDb();
-    const rows = await db.query('MATCH (c:Config) RETURN c.key AS key, c.value AS value');
-    configCache = {};
-    for (const row of rows) {
-      configCache[row.key] = row.value;
-    }
-  } catch {
-    configCache = {};
-  }
-  return configCache!;
-}
-
-function getCachedConfig(key: string, defaultValue: string): string {
-  return configCache?.[key] ?? defaultValue;
-}
-
-// ── Handler registration ───────────────────────────────
+// ═══════════════════════════════════════════════════════════
+// Handler registration
+// ═══════════════════════════════════════════════════════════
 
 export function registerContextHooks(pi: ExtensionAPI): void {
-  // Refresh config cache at session start
-  pi.on('session_start', async () => {
-    configCache = null; // Reset so it's fetched fresh on first before_agent_start
-  });
+  pi.on('before_agent_start', async (ctx) => {
+    const state = getState();
+    const userText = state.lastUserText;
 
-  pi.on('before_agent_start', async (event, ctx) => {
-    if (!hasEngine()) return; // DB not available — skip
-
-    // Refresh config cache if needed
-    if (!configCache) {
-      await refreshConfigCache();
+    // Tier 1: Universal rules (injected once per session)
+    if (!hasRulesMessage(ctx.sessionManager)) {
+      ctx.sessionManager.addMessage({
+        type: 'custom',
+        customType: UNIVERSAL_RULES_CUSTOM_TYPE,
+        content: UNIVERSAL_RULES_TEXT,
+      });
     }
 
-    // ── PART A: Universal rules (Tier 1 — message, once, persistent) ──
-    // Only inject on the first turn. Guard check prevents duplicates on /reload.
-    if (!hasRulesMessage(ctx.sessionManager as any)) {
-      const ctxStr = await buildDynamicContext(event, ctx);
-      return {
-        message: {
-          customType: UNIVERSAL_RULES_CUSTOM_TYPE,
-          content: UNIVERSAL_RULES_TEXT,
-          display: true,
-        },
-        ...(ctxStr ? { systemPrompt: ctxStr } : {}),
-      };
-    }
+    // Skip retrieval for very short inputs
+    if (!userText || userText.length < 10) return;
 
-    // ── PART B: Dynamic context (Tier 2+3 — systemPrompt, every turn) ──
-    let systemPrompt = await buildDynamicContext(event, ctx);
+    try {
+      // Step 1: Extract entities from the prompt
+      const extract = await ilo.extract(userText);
 
-    // ── PART C: Classify mode, gate tools, inject mode rules ──
-    const classification = await classify(event.prompt || '');
-    const mode = classification.mode || 'research'; // fallback to research
-    transitionTo(mode);
+      // Step 2: Embed the query for vector search
+      let queryEmb: number[] | undefined;
+      try {
+        const emb = await ilo.embed(userText, true);
+        if (emb.ok && emb.data?.embedding?.length) {
+          queryEmb = emb.data.embedding;
+        }
+      } catch {
+        // Embedding failure is non-fatal — falls back to FTS + label match
+      }
 
-    // Gate tools: block write/edit/bash in research and plan modes
-    const gatedModes: ModeId[] = ['research', 'plan'];
-    const allTools = pi.getActiveTools();
-    const modeTools = getAllowedTools(mode);
-    
-    if (gatedModes.includes(mode) && modeTools.length > 0) {
-      const filtered = allTools.filter((t: string) => !['write', 'edit', 'bash'].includes(t));
-      pi.setActiveTools(filtered);
-    }
+      // Step 3: Recall context (FTS + vector + PPR)
+      const recall = await ilo.recall(userText, queryEmb);
 
-    // Build mode rules text
-    const modeConfig = MODES[mode];
-    if (modeConfig) {
-      const modeRules = [
-        `## Current Mode: ${modeConfig.label}`,
-        `${modeConfig.description}`,
-        `Available tools: ${modeTools.join(', ')}`,
-        ...modeConfig.promptRules,
-        '',
-        'Use the mode tool with action:"transition" to switch modes if needed.',
-      ].join('\n');
-      systemPrompt = systemPrompt 
-        ? systemPrompt + '\n\n' + modeRules
-        : modeRules;
-    }
-
-    if (systemPrompt) {
-      return { systemPrompt };
+      // Step 4: Inject context into system prompt
+      if (recall.ok && recall.data?.context) {
+        ctx.addSystemPrompt(recall.data.context);
+      }
+    } catch (err) {
+      console.error('[ilo-context] recall failed:', err);
+      // Non-fatal — LLM can still respond without context
     }
   });
-}
-
-// ── Dynamic context builder ────────────────────────────
-
-async function buildDynamicContext(
-  event: any,
-  ctx: any
-): Promise<string | undefined> {
-  // Check context usage
-  let ctxUsage: number | undefined;
-  try {
-    const usage = ctx.getContextUsage?.();
-    if (usage && typeof usage === 'object' && 'tokens' in usage) {
-      const maxTokens = parseInt(
-        getCachedConfig('context.injection.max_chars', '2000'),
-        10
-      );
-      ctxUsage = usage.tokens / (maxTokens * 4); // Rough estimate: 4 chars per token
-    }
-  } catch {
-    // ctx.getContextUsage might not be available
-  }
-
-  // Build context blocks
-  const blocks = await buildContext(event.prompt || '', {
-    ctxUsage,
-    systemPromptOptions: event.systemPromptOptions,
-  });
-
-  if (blocks.length === 0) return undefined;
-
-  const contextString = composeContextString(blocks);
-
-  // Append to the existing system prompt (don't replace)
-  return event.systemPrompt + contextString;
 }

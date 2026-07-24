@@ -1,47 +1,35 @@
 // ============================================================================
-// events/turn.ts — turn_end handler for logging + entity extraction
+// events/turn.ts — turn_end handler (ILO-powered)
 // ============================================================================
-// On each turn_end:
-//   1. Logs Turn node (tokens_in, tokens_out, session_id, model)
-//   2. Extracts entities from user + assistant text
-//   3. Increments mention_count for matched entities
-//   4. Triggers consolidation counter
+// On each turn end:
+//   1. Extracts entities and claims from the full conversation
+//   2. Signals learning (which entities were useful)
+//   3. Stores the turn with entities and claims via ILO
 // ============================================================================
 
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import * as crypto from 'node:crypto';
-import { hasEngine, getDb, getSessionId } from '../lib/engine';
-import { extractEntities, advanceEntityCacheTurn } from '../lib/context';
-import { consolidate } from '../lib/consolidation';
+import { ilo } from '../lib/ilo-client';
 
-// ── In-memory state ─────────────────────────────────────
+// ── In-memory state (survives /reload) ────────────────
 
-const STATE_KEY = '__ailo_turn_state__';
+const STATE_KEY = '__ailo_ilo_turn_state__';
 
 interface TurnState {
-  /** The last user input text (set by input event, read by turn_end) */
   lastUserText: string;
-  /** Consolidation counter (incremented each turn, triggers at 10) */
   turnCount: number;
+  sessionId: string;
 }
 
-function getState(): TurnState {
+export function getState(): TurnState {
   let state = (globalThis as any)[STATE_KEY];
   if (!state) {
-    state = { lastUserText: '', turnCount: 0 };
+    state = { lastUserText: '', turnCount: 0, sessionId: 'default' };
     (globalThis as any)[STATE_KEY] = state;
   }
   return state;
 }
 
-// ═══════════════════════════════════════════════════════════
-// User text forwarder (called by input handler)
-// ═══════════════════════════════════════════════════════════
-
-/**
- * Store the user's input text for turn_end to use.
- * Called from events/input.ts at the start of each turn.
- */
+/** Store the user's input text (called from input event). */
 export function setCurrentUserText(text: string): void {
   getState().lastUserText = text;
 }
@@ -52,114 +40,57 @@ export function setCurrentUserText(text: string): void {
 
 export function registerTurnHooks(pi: ExtensionAPI): void {
   pi.on('session_start', async () => {
-    // Reset state, restore consolidation counter from Config node
-    try {
-      const db = getDb();
-      const rows = await db.query(
-        "MATCH (c:Config {key: 'consolidation.turn_counter'}) RETURN c.value AS value"
-      );
-      const count = rows.length > 0 ? parseInt(rows[0].value, 10) : 0;
-      getState().turnCount = isNaN(count) ? 0 : count;
-    } catch {
-      getState().turnCount = 0;
-    }
-  });
-
-  pi.on('turn_end', async (event, ctx) => {
-    if (!hasEngine()) return;
-
     const state = getState();
-    state.turnCount++;
+    state.turnCount = 0;
+    state.sessionId = crypto.randomUUID?.() || Date.now().toString(36);
+    // Warm up ILO (non-blocking)
+    ilo.status().catch(() => {});
+  });
+
+  pi.on('turn_end', async ({ turn }) => {
+    const state = getState();
+    const userText = state.lastUserText;
+    const responseText = turn?.response || turn?.text || '';
+
+    if (!userText && !responseText) return;
 
     try {
-      const sessionId = getSessionId();
-      const db = getDb();
-      const now = new Date().toISOString();
+      // Step 1: Extract entities and claims from the full turn
+      const fullText = `${userText}\n${responseText}`;
+      const extract = await ilo.extract(fullText);
 
-      // ── 1. Log Turn node ──
-      const turnText = extractTurnText(event.message);
-      
-      await db.addNode('Turn', {
-        session_id: sessionId,
-        turn_index: event.turnIndex ?? state.turnCount,
-        user_text: state.lastUserText || '',
-        response_text: turnText,
-        model: (event.message as any)?.model || '',
-        tokens_in: (event.message as any)?.usage?.input_tokens || 0,
-        tokens_out: (event.message as any)?.usage?.output_tokens || 0,
-        timestamp: now,
-      });
+      // Step 2: Determine which entities were used (learning signal)
+      const usedLabels = (extract.data?.entities || [])
+        .filter((e: any) => responseText.toLowerCase().includes(e.name.toLowerCase()))
+        .map((e: any) => e.name);
 
-      // ── 2. Extract entities from user + assistant text ──
-      const allText = (state.lastUserText || '') + ' ' + (turnText || '');
-      const entities = await extractEntities(allText);
-
-      // Advance entity cache turn counter (once per turn)
-      advanceEntityCacheTurn();
-
-      // ── 2b. Gap detection (tutor mode) ──
-      const userText = state.lastUserText || '';
-      const strugglePatterns = /don'?t\s+(get|understand|follow|know)|(stuck|confused|unclear|not\s+sure|cannot|can't\s+(figure|grasp))/i;
-      if (userText && strugglePatterns.test(userText)) {
-        const topic = entities.length > 0 ? entities[0] : 'unknown';
-        try {
-          await db.addNode('Belief', {
-            id: crypto.randomUUID(),
-            content: `User identified gap: ${topic} — "${userText.substring(0, 120)}"`,
-            confidence: 0.7,
-            entity: 'learner:gap',
-            provenance: 'user.identified',
-            last_referenced: now,
-            created_at: now,
-          });
-        } catch {}
+      if (usedLabels.length > 0) {
+        // Step 3: Signal learning
+        await ilo.learn({
+          query: userText,
+          responseText,
+          usedLabels,
+          quality: 0.8,
+        }).catch(() => {});
       }
 
-      // ── 3. Increment mention_count ──
-      for (const entityName of entities) {
-        try {
-          await db.exec(
-            'MATCH (e:Entity {name: $name}) SET e.mention_count = COALESCE(e.mention_count, 0) + 1',
-            { name: entityName }
-          );
-        } catch {
-          // Entity may not exist — that's fine
-        }
-      }
-
-      // ── 4. Update consolidation counter in Config node ──
-      if (state.turnCount % 10 === 0) {
-        await db.exec(
-          "MATCH (c:Config {key: 'consolidation.turn_counter'}) SET c.value = $count",
-          { count: String(state.turnCount) }
-        );
-        
-        await consolidate();
-      }
-
-      // Reset user text for next turn
-      state.lastUserText = '';
-    } catch (err: any) {
-      console.warn('[turn] turn_end error:', err.message);
+      // Step 4: Store the turn
+      await ilo.remember({
+        query: userText,
+        response: responseText,
+        entities: extract.data?.entities || [],
+        claims: extract.data?.claims || [],
+        sessionId: state.sessionId,
+        turnIndex: state.turnCount++,
+      }).catch(() => {});
+    } catch (err) {
+      console.error('[ilo-turn] failed:', err);
+      // Non-fatal — agent continues without memory
     }
   });
-}
 
-// ═══════════════════════════════════════════════════════════
-// Helpers
-// ═══════════════════════════════════════════════════════════
-
-/** Extract text content from an assistant message. */
-function extractTurnText(message: any): string {
-  if (!message?.content) return '';
-  
-  const content = message.content;
-  if (typeof content === 'string') return content;
-  if (Array.isArray(content)) {
-    return content
-      .filter((c: any) => c.type === 'text')
-      .map((c: any) => c.text || '')
-      .join('\n');
-  }
-  return '';
+  pi.on('session_end', async () => {
+    // ILO auto-shuts down via ILO_MAX_UPTIME timer
+    // No cleanup needed here
+  });
 }
