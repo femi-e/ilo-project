@@ -195,7 +195,7 @@ on first call. If the network is unavailable, `get_model()` panics via `expect()
 |--------------|:--------:|:----------:|:---------:|:----------:|
 | WAL corruption on kill | 🔴 Data loss | High | ✅ This session | ✅ Fixed |
 | Silent tool failures | 🔴 Data loss | High | ✅ This session | ✅ Fixed |
-| Cache/DB desync | 🟡 Partial loss | Medium | ❌ | ⏳ Drop + warm_cache |
+| Cache/DB desync | 🟡 Partial loss | Medium | ❌ | ✅ Fixed — read-through fallback to DB on cache miss |
 | SearchIndex staleness | 🟡 FTS broken | High | ✅ This session | ✅ Fixed |
 | PPR fanout dilution | 🟡 Graph invisible | Medium | ✅ This session | ✅ Fixed |
 | Division by zero (0-sum weights) | 🔴 Crash | Low | ❌ | ✅ Fixed |

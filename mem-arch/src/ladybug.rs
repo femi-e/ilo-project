@@ -335,13 +335,18 @@ impl Store for LadybugStore {
                     tid, key, tid, key, kind, val_col))?;
             }
 
-            // Link to previous turn for temporal ordering
-            if let Ok(mut prev) = c.query("MATCH (t:Node {type: 'turn'}) RETURN t.id ORDER BY t.created_at DESC LIMIT 1") {
+            // Link to previous turn for temporal ordering.
+            // Uses turn_index comparison instead of created_at to avoid races:
+            // if two turns are created simultaneously, the one with the higher
+            // index is guaranteed to come after, regardless of commit order.
+            if let Ok(mut prev) = c.query("MATCH (t:Node {type: 'turn'}) RETURN t.id, t.turn_index ORDER BY t.created_at DESC LIMIT 1") {
                 if let Some(row) = prev.next() {
-                    if let Value::String(prev_id) = &row[0] {
-                        let seq_id = uid("seq");
-                        c.query(&format!("MATCH (a:Node {{id: '{}'}}), (b:Node {{id: '{}'}}) CREATE (a)-[:LINK {{id: '{}', type: 'seq', weight: 0.9}}]->(b)",
-                            prev_id, tid, seq_id))?;
+                    if let (Value::String(prev_id), Value::Int64(prev_idx)) = (&row[0], &row[1]) {
+                        if *prev_idx < turn.turn_index as i64 {
+                            let seq_id = uid("seq");
+                            c.query(&format!("MATCH (a:Node {{id: '{}'}}), (b:Node {{id: '{}'}}) CREATE (a)-[:LINK {{id: '{}', type: 'seq', weight: 0.9}}]->(b)",
+                                prev_id, tid, seq_id))?;
+                        }
                     }
                 }
             }
@@ -377,7 +382,27 @@ impl Store for LadybugStore {
     }
 
     async fn get_node(&self, id: &NodeId) -> Result<Option<NodeRecord>, StoreError> {
-        Ok(lock_or_recover!(self.node_cache).get(id).cloned())
+        // Fast path: read from cache
+        {
+            let cache = lock_or_recover!(self.node_cache);
+            if let Some(node) = cache.get(id) {
+                return Ok(Some(node.clone()));
+            }
+        }
+        // Cache miss: fall back to DB query (recovers from cache/DB desync)
+        let c = Connection::new(self.db.as_ref())?;
+        let mut r = c.query(&format!(
+            "MATCH (n:Node {{id: '{}'}}) RETURN n.id, n.type, n.tags, n.label, n.confidence, n.created_at, n.updated_at, n.embedding",
+            id.replace('\'', "''")
+        ))?;
+        for row in &mut r {
+            if let Some(node) = row_to_node(&row) {
+                // Update cache for future reads
+                lock_or_recover!(self.node_cache).insert(node.id.clone(), node.clone());
+                return Ok(Some(node));
+            }
+        }
+        Ok(None)
     }
 
     async fn find_nodes(&self, query: &NodeQuery) -> Result<Vec<NodeRecord>, StoreError> {

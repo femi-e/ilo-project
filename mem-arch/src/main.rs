@@ -31,9 +31,9 @@ async fn main() {
     // Open or create the database (retry up to 5 times for lock contention)
     let store = {
         let mut retries = 0;
-        loop {
+        let store = loop {
             match LadybugStore::new(&db_path) {
-                Ok(s) => break s,
+                Ok(s) => break Some(s),
                 Err(e) => {
                     let err_str = e.to_string();
                     if err_str.contains("Lock is held") && retries < 5 {
@@ -42,8 +42,26 @@ async fn main() {
                         std::thread::sleep(std::time::Duration::from_secs(1));
                         continue;
                     }
-                    tracing::error!("Failed to open database at {db_path}: {e}");
-                    std::process::exit(1);
+                    break None;
+                }
+            }
+        };
+        match store {
+            Some(s) => s,
+            None => {
+                // Lock persisted after 5 retries — probably a stale lock from
+                // a killed process. Delete the DB files and start fresh.
+                tracing::warn!("Lock not released after 5 retries, rebuilding database...");
+                let wal_path = format!("{}.wal", db_path);
+                let _ = std::fs::remove_file(&db_path);
+                let _ = std::fs::remove_file(&wal_path);
+                // Store directory already exists
+                match LadybugStore::new(&db_path) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::error!("Still cannot open database after rebuild: {e}");
+                        std::process::exit(1);
+                    }
                 }
             }
         }
@@ -51,6 +69,9 @@ async fn main() {
 
     // Remove stale socket from a previous run
     let _ = std::fs::remove_file(&socket_path);
+
+    // Try to warm the embedding model (non-fatal if offline)
+    mem_arch::embed::warmup();
 
     // Warm cache (fast for small DBs, runs before server)
     let _ = store.warm_cache();
