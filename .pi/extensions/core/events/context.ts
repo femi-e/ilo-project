@@ -32,6 +32,23 @@ TypeScript extension that integrates ILO into pi's turn lifecycle.
 - Hooks into before_agent_start and turn_end
 - Orchestrates: extract → embed → recall → LLM → learn → store
 
+### Memory Context Format
+
+When ILO retrieves memory, it's injected as an Anchor block:
+  @session [query: user's question]
+    [nodes: 3]
+
+  # Focus:
+    EntityName [confidence: 0.95]    = directly matched entities
+
+  # Related:
+    OtherEntity [rel: 0.45]         = entities reached via graph traversal
+
+- @session  the query that triggered recall
+- # Focus  seed entities (direct matches to the query)
+- # Related  entities connected to focus via graph links, with relevance scores
+- Higher scores = stronger connection to the query
+
 ### Available Tools
 - \`project_tree\` — Show live directory structure (always up-to-date)
 - \`git_snapshot\` — Show current git branch, status, recent commits
