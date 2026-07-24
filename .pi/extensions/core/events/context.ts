@@ -15,53 +15,50 @@ import { getState } from './turn';
 // ── System instructions (injected once per session) ──
 
 const SYSTEM_INSTRUCTIONS = `
-## Project Context
+# Project Overview
 
-You are working in the **ILO** project — a cognitive memory runtime for coding agents.
-The project has two layers:
+This is **ILO** — a memory system for coding agents. It remembers entities, their relationships, and past conversations across sessions. Memory is automatic: you don't need to save or load it.
 
-### Rust sidecar (mem-arch/)
-Graph memory database with semantic retrieval. Runs as a sidecar process.
-- 10 HTTP endpoints over Unix socket
-- PPR graph traversal for associative recall
-- BGE-base embeddings via Candle (768-dim, local CPU)
-- Hebbian learning loop with wall-clock decay
+The project has two parts:
+- **mem-arch/** — Rust service that stores and retrieves memory
+- **.pi/extensions/core/** — TypeScript extension that connects pi to the memory service
 
-### Pi extension (.pi/extensions/core/)
-TypeScript extension that integrates ILO into pi's turn lifecycle.
-- Hooks into before_agent_start and turn_end
-- Orchestrates: extract → embed → recall → LLM → learn → store
+# How Memory Works
 
-### Memory Context Format
+When you receive a block like this, it's your memory from past sessions:
 
-When ILO retrieves memory, it's injected as an Anchor block:
-  @session [query: user's question]
-    [nodes: 3]
+  @session [query: your question]
 
   # Focus:
-    EntityName [confidence: 0.95]    = directly matched entities
+    EntityName [confidence: 0.95]    ← things that match your question
 
   # Related:
-    OtherEntity [rel: 0.45]         = entities reached via graph traversal
+    OtherEntity [rel: 0.45]         ← things connected to those matches
 
-- @session  the query that triggered recall
-- # Focus  seed entities (direct matches to the query)
-- # Related  entities connected to focus via graph links, with relevance scores
-- Higher scores = stronger connection to the query
+- **# Focus** entities are directly relevant to what you asked
+- **# Related** entities are connected to Focus via past conversations
+- Higher scores (0.0-1.0) mean stronger relevance
+- If memory is empty, the block won't appear
 
-### Available Tools
-- \`project_tree\` — Show live directory structure (always up-to-date)
-- \`git_snapshot\` — Show current git branch, status, recent commits
-- \`git_commit\` — Stage all changes and commit (auto-generates message)
-- \`store\` — Store a belief in long-term memory
-- \`entity_lookup\` — Look up a known entity in the knowledge graph
-- \`connect\` — Link two entities in the knowledge graph
+When you mention new information, it's automatically saved as memory for future sessions. You don't need to call a tool for this.
 
-### Workflow
-1. Before changing code, use \`git_snapshot\` to see current state
-2. After meaningful changes, use \`git_commit\` to save work
-3. Use \`project_tree\` when you need to understand file locations
-4. Memory from previous sessions is automatically available
+# Your Tools
+
+These tools help you understand and change the project:
+
+- **project_tree** — see the current file structure (always up to date)
+- **git_snapshot** — see current git branch, what's changed, recent commits
+- **git_commit** — stage all changes and commit (message auto-generated from diff)
+- **store** — explicitly save a fact as permanent memory (use when something should be remembered across sessions)
+- **entity_lookup** — look up what's known about a specific entity
+- **connect** — create a relationship between two entities in memory
+
+# How to Work
+
+1. Before making changes, check git state with \`git_snapshot\`
+2. Use \`project_tree\` when you need to understand file locations
+3. After meaningful progress, commit with \`git_commit\`
+4. If unsure about a file or concept, use \`entity_lookup\` to check memory
 `;
 
 let SYSTEM_HINT_INJECTED = false;
