@@ -38,14 +38,14 @@ export function registerIloTools(api: ExtensionAPI): void {
     },
   });
 
-  // ── store: Store a belief about an entity ──────────
+  // ── store: Store a fact as an entity + claim ────────
   api.registerTool({
     name: 'store',
     label: 'Store',
-    description: 'Store a belief or fact in persistent long-term memory.',
+    description: 'Store a fact or entity in persistent long-term memory. Creates an entity node and a claim linked to it.',
     parameters: Type.Object({
-      content: Type.String({ description: 'The belief text' }),
-      entity: Type.Optional(Type.String({ description: 'What this belief is about' })),
+      content: Type.String({ description: 'The fact text to store as a claim' }),
+      entity: Type.Optional(Type.String({ description: 'The entity label this claim is about (default: "general")' })),
       confidence: Type.Optional(Type.Number({ description: '0.0 to 1.0 (default 0.5)' })),
     }),
     execute: async (_id, params) => {
@@ -54,15 +54,22 @@ export function registerIloTools(api: ExtensionAPI): void {
       const entity = params.entity || 'general';
       const conf = params.confidence ?? 0.5;
 
-      await ilo.remember({
+      // Use seconds-since-epoch as turn_index (fits u32, ~2106 overflow)
+      // Not a real conversation turn — this is a standalone fact store.
+      const ts = Math.floor(Date.now() / 1000);
+      const res = await ilo.remember({
         query: '',
         response: content,
         entities: [{ label: entity, confidence: conf, tags: [] }],
         claims: [{ content, confidence: conf, provenance: 'user_confirmed', entities: [entity] }],
-        turnIndex: Date.now(),
+        turnIndex: ts,
       });
 
-      return { content: [{ type: 'text', text: `Stored belief about ${entity}.` }], details: { entity, confidence: conf } };
+      if (!res.ok) {
+        return { content: [{ type: 'text', text: `Store failed: ${res.error}` }], details: {} as any };
+      }
+
+      return { content: [{ type: 'text', text: `Stored entity "${entity}" with claim: ${content}` }], details: { entity, claim: content, confidence: conf } };
     },
   });
 
@@ -102,19 +109,22 @@ export function registerIloTools(api: ExtensionAPI): void {
     },
   });
 
-  // ── forget: Deprecate a stored belief ──────────────
+  // ── forget: Deprecate a stored claim/entity ────────
   api.registerTool({
     name: 'forget',
     label: 'Forget',
-    description: 'Deprecate or remove a stored belief.',
+    description: 'Deprecate or remove a stored entity or claim by marking it as forgotten.',
     parameters: Type.Object({
-      content: Type.String({ description: 'The belief text to deprecate' }),
-      entity: Type.Optional(Type.String({ description: 'Entity the belief is about' })),
+      content: Type.String({ description: 'The fact text to deprecate' }),
+      entity: Type.Optional(Type.String({ description: 'Entity the claim is about' })),
     }),
     execute: async (_id, params) => {
       const entity = params.entity || 'general';
-      await ilo.entityUpdate(entity, { forgotten: true });
-      return { content: [{ type: 'text', text: `Deprecated belief about ${entity}.` }], details: { entity } };
+      const res = await ilo.entityUpdate(entity, { forgotten: true });
+      if (!res.ok) {
+        return { content: [{ type: 'text', text: `Forget failed: ${res.error}` }], details: {} as any };
+      }
+      return { content: [{ type: 'text', text: `Marked entity "${entity}" as forgotten.` }], details: { entity } };
     },
   });
 
