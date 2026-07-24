@@ -45,14 +45,39 @@ pub async fn create_entities(
         build_entity_mutations(&store, &req.entities, &mut entity_ids).await
     };
 
-    // Write, then drop the lock before rebuilding search index
+    // Write, then drop the lock
     {
         let mut store = state.store.write().await;
         if let Err(e) = store.write_maintenance(mutations).await {
             return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response();
         }
     }
-    // Write lock dropped — rebuild search index
+
+    // Generate embeddings for newly created entities
+    if !created.is_empty() {
+        let labels: Vec<String> = req.entities.iter().map(|e| e.label.clone()).collect();
+        let embeddings: Vec<Option<Vec<f32>>> = tokio::task::spawn_blocking(move || {
+            labels.iter().map(|l| mem_arch::embed::embed(l, false)).collect()
+        }).await.unwrap_or_default();
+
+        let store = state.store.read().await;
+        for (i, eid) in created.iter().enumerate() {
+            if i < embeddings.len() {
+                if let Some(emb) = &embeddings[i] {
+                    if !emb.is_empty() && emb.iter().any(|x| *x != 0.0) {
+                        let emb_str: String = emb.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(", ");
+                        let _ = store.raw_query(&format!(
+                            "MATCH (n:Node {{id: '{}'}}) SET n.embedding = [{}]",
+                            eid.replace('\'', "''"), emb_str
+                        )).await;
+                    }
+                }
+            }
+        }
+        drop(store);
+    }
+
+    // Rebuild search index
     if let Ok(nodes) = state.store.read().await.find_nodes_by_type(&NodeType::Entity).await {
         state.search_index.write().await.merge(&nodes);
     }
@@ -483,6 +508,18 @@ pub async fn update_link(
 
     let mut mutations = Vec::new();
 
+    // Update link type via raw query if provided
+    if let Some(link_type) = &req.r#type {
+        if let Ok(lt) = link_type.parse::<LinkType>() {
+            let query = format!(
+                "MATCH ()-[l:LINK {{id: '{}'}}]->() SET l.type = '{}'",
+                id.replace('\'', "''"),
+                lt.as_str()
+            );
+            let _ = store.raw_query(&query).await;
+        }
+    }
+
     if let Some(weight) = req.weight {
         mutations.push(StoreMutation::UpdateLinkWeight { id: id.clone(), weight });
     }
@@ -650,14 +687,41 @@ pub async fn batch(
         }
     }
 
-    // Write, then drop the lock before rebuilding search index
+    // Write, then drop the lock
     {
         let mut store = state.store.write().await;
         if let Err(e) = store.write_maintenance(mutations).await {
             return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response();
         }
     }
-    // Write lock dropped — rebuild search index
+
+    // Generate embeddings for newly created entities
+    if !entities_created.is_empty() {
+        if let Some(entities) = &req.entities {
+            let labels: Vec<String> = entities.iter().map(|e| e.label.clone()).collect();
+            let embeddings: Vec<Option<Vec<f32>>> = tokio::task::spawn_blocking(move || {
+                labels.iter().map(|l| mem_arch::embed::embed(l, false)).collect()
+            }).await.unwrap_or_default();
+
+            let store = state.store.read().await;
+            for (i, eid) in entities_created.iter().enumerate() {
+                if i < embeddings.len() {
+                    if let Some(emb) = &embeddings[i] {
+                        if !emb.is_empty() && emb.iter().any(|x| *x != 0.0) {
+                            let emb_str: String = emb.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(", ");
+                            let _ = store.raw_query(&format!(
+                                "MATCH (n:Node {{id: '{}'}}) SET n.embedding = [{}]",
+                                eid.replace('\'', "''"), emb_str
+                            )).await;
+                        }
+                    }
+                }
+            }
+            drop(store);
+        }
+    }
+
+    // Rebuild search index
     if let Ok(nodes) = state.store.read().await.find_nodes_by_type(&NodeType::Entity).await {
         state.search_index.write().await.merge(&nodes);
     }

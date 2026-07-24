@@ -221,6 +221,85 @@ class IloClient {
   async entityUpdate(name: string, properties: Record<string, unknown>, tags?: string[]) {
     return this.request<{ status: string; created: boolean; entities_affected: string[] }>('POST', '/entity/update', { name, properties, tags });
   }
+
+  // ═════════════════════════════════════════════════════
+  // NEW REST CRUD METHODS
+  // ═════════════════════════════════════════════════════
+
+  /** Create entities (batch). */
+  async createEntities(entities: EntityInput[]) {
+    return this.request<{ created: string[]; count: number }>('POST', '/entities', { entities });
+  }
+
+  /** List/filter entities. */
+  async listEntities(params?: { type?: string; tag?: string; label_contains?: string; limit?: number; offset?: number }) {
+    return this.request<{ nodes: any[]; total: number }>('POST', '/entities/search', params || {});
+  }
+
+  /** Get entity by ID or label (with properties + links). */
+  async getEntity(idOrLabel: string) {
+    return this.request<any>('GET', `/entities/${encodeURIComponent(idOrLabel)}`);
+  }
+
+  /** Update entity fields. */
+  async updateEntity(id: string, fields: { label?: string; tags?: string[]; confidence?: number; properties?: Record<string, unknown> }) {
+    return this.request<{ status: string; id: string }>('PATCH', `/entities/${encodeURIComponent(id)}`, fields);
+  }
+
+  /** Delete entity (cascade). */
+  async deleteEntity(id: string) {
+    return this.request<{ status: string; deleted: string }>('DELETE', `/entities/${encodeURIComponent(id)}`);
+  }
+
+  /** Quick lookup by label. */
+  async lookup(label: string) {
+    return this.request<any>('GET', `/lookup/${encodeURIComponent(label)}`);
+  }
+
+  /** Create claims. */
+  async createClaims(claims: ClaimInput[]) {
+    return this.request<{ created: string[]; count: number }>('POST', '/claims', { claims });
+  }
+
+  /** Get claim by ID. */
+  async getClaim(id: string) {
+    return this.request<any>('GET', `/claims/${encodeURIComponent(id)}`);
+  }
+
+  /** Update claim. */
+  async updateClaim(id: string, fields: { confidence?: number; properties?: Record<string, unknown> }) {
+    return this.request<{ status: string; id: string }>('PATCH', `/claims/${encodeURIComponent(id)}`, fields);
+  }
+
+  /** Delete claim. */
+  async deleteClaim(id: string) {
+    return this.request<{ status: string; deleted: string }>('DELETE', `/claims/${encodeURIComponent(id)}`);
+  }
+
+  /** Create a link between two nodes. */
+  async createLink(from: string, to: string, type?: string, weight?: number) {
+    return this.request<{ id: string; from: string; to: string; type: string }>('POST', '/links', { from, to, type, weight });
+  }
+
+  /** Update a link. */
+  async updateLink(id: string, fields: { type?: string; weight?: number; properties?: Record<string, unknown> }) {
+    return this.request<{ status: string; id: string }>('PATCH', `/links/${encodeURIComponent(id)}`, fields);
+  }
+
+  /** Delete a link. */
+  async deleteLink(id: string) {
+    return this.request<{ status: string; deleted: string }>('DELETE', `/links/${encodeURIComponent(id)}`);
+  }
+
+  /** Batch atomic write (turn + entities + claims + links). */
+  async batch(params: {
+    turn?: { query?: string; response?: string; model?: string; tokens_in?: number; tokens_out?: number; duration_ms?: number };
+    entities?: EntityInput[];
+    claims?: ClaimInput[];
+    links?: Array<{ from: string; to: string; type?: string; weight?: number }>;
+  }) {
+    return this.request<{ turn_id?: string; entities_created: string[]; claims_created: string[]; links_created: string[] }>('POST', '/batch', params);
+  }
 }
 
 export const ilo = new IloClient();

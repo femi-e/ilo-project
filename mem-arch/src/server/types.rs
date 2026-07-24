@@ -287,26 +287,6 @@ pub struct BatchResp {
 }
 
 #[derive(Serialize)]
-pub struct StatusResp {
-    pub status: String,
-    pub version: String,
-    pub uptime_secs: u64,
-    pub counts: serde_json::Map<String, serde_json::Value>,
-}
-
-#[derive(Serialize)]
-pub struct UpdateResp {
-    pub status: String,
-}
-
-#[derive(Serialize)]
-pub struct EntityUpdateResp {
-    pub status: String,
-    pub created: bool,
-    pub entities_affected: Vec<String>,
-}
-
-#[derive(Serialize)]
 pub struct DeleteResp {
     pub status: String,
     pub deleted: String,

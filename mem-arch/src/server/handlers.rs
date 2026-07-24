@@ -16,6 +16,7 @@ use super::helpers::{resolve_entity, build_entity_mutations, build_claim_mutatio
 
 // ─── /status ────────────────────────────────────────────
 
+#[allow(dead_code)]
 pub async fn status(Extension(state): Extension<Arc<AppState>>) -> Json<serde_json::Value> {
     let db_ok = state.store.read().await.get_tag_index().await.is_ok();
     Json(serde_json::json!({

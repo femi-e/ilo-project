@@ -46,6 +46,7 @@ pub async fn run_server(store: mem_arch::ladybug::LadybugStore, socket_path: &st
         .route("/entities/{id}", get(crud::get_entity))
         .route("/entities/{id}", patch(crud::update_entity))
         .route("/entities/{id}", delete(crud::delete_entity))
+        .route("/lookup/{label}", get(crud::get_entity))
         .route("/claims", post(crud::create_claims))
         .route("/claims/{id}", get(crud::get_claim))
         .route("/claims/{id}", patch(crud::update_claim))
