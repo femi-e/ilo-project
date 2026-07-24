@@ -49,20 +49,16 @@ async fn main() {
         match store {
             Some(s) => s,
             None => {
-                // Lock persisted after 5 retries — probably a stale lock from
-                // a killed process. Delete the DB files and start fresh.
-                tracing::warn!("Lock not released after 5 retries, rebuilding database...");
-                let wal_path = format!("{}.wal", db_path);
-                let _ = std::fs::remove_file(&db_path);
-                let _ = std::fs::remove_file(&wal_path);
-                // Store directory already exists
-                match LadybugStore::new(&db_path) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        tracing::error!("Still cannot open database after rebuild: {e}");
-                        std::process::exit(1);
-                    }
-                }
+                // Lock persisted after 5 retries. Don't delete the DB — that
+                // would destroy data if another live process holds the lock.
+                // Just exit; the pi extension's auto-restart will retry.
+                tracing::error!(
+                    "Database still locked after 5 retries at {}. \
+                     If no other ILO process is running, delete the .lbug files manually \
+                     or wait for the OS lock to expire.",
+                    db_path
+                );
+                std::process::exit(1);
             }
         }
     };

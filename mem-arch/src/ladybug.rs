@@ -54,8 +54,15 @@ impl LadybugStore {
     /// Checkpoint the WAL to the main database file.
     /// Called on graceful shutdown to prevent WAL corruption.
     pub fn checkpoint(&self) {
-        if let Ok(c) = Connection::new(self.db.as_ref()) {
-            let _ = c.query("CHECKPOINT");
+        tracing::info!("Checkpointing WAL...");
+        match Connection::new(self.db.as_ref()) {
+            Ok(c) => {
+                match c.query("CHECKPOINT") {
+                    Ok(_) => tracing::info!("WAL checkpoint complete"),
+                    Err(e) => tracing::error!("WAL checkpoint failed: {e}"),
+                }
+            },
+            Err(e) => tracing::error!("Cannot connect for checkpoint: {e}"),
         }
     }
 
@@ -336,17 +343,16 @@ impl Store for LadybugStore {
             }
 
             // Link to previous turn for temporal ordering.
-            // Uses turn_index comparison instead of created_at to avoid races:
-            // if two turns are created simultaneously, the one with the higher
-            // index is guaranteed to come after, regardless of commit order.
-            if let Ok(mut prev) = c.query("MATCH (t:Node {type: 'turn'}) RETURN t.id, t.turn_index ORDER BY t.created_at DESC LIMIT 1") {
+            // Note: in rare concurrent-write scenarios, two simultaneous
+            // transactions may both see the same previous turn (neither sees
+            // the other's uncommitted turn). This creates a fork in the seq
+            // chain, which is harmless — seq links are advisory, not critical.
+            if let Ok(mut prev) = c.query("MATCH (t:Node {type: 'turn'}) RETURN t.id ORDER BY t.created_at DESC LIMIT 1") {
                 if let Some(row) = prev.next() {
-                    if let (Value::String(prev_id), Value::Int64(prev_idx)) = (&row[0], &row[1]) {
-                        if *prev_idx < turn.turn_index as i64 {
-                            let seq_id = uid("seq");
-                            c.query(&format!("MATCH (a:Node {{id: '{}'}}), (b:Node {{id: '{}'}}) CREATE (a)-[:LINK {{id: '{}', type: 'seq', weight: 0.9}}]->(b)",
-                                prev_id, tid, seq_id))?;
-                        }
+                    if let Value::String(prev_id) = &row[0] {
+                        let seq_id = uid("seq");
+                        c.query(&format!("MATCH (a:Node {{id: '{}'}}), (b:Node {{id: '{}'}}) CREATE (a)-[:LINK {{id: '{}', type: 'seq', weight: 0.9}}]->(b)",
+                            prev_id, tid, seq_id))?;
                     }
                 }
             }
