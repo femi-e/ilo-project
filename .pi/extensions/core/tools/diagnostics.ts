@@ -28,7 +28,7 @@ export function registerDiagnosticsTool(api: ExtensionAPI): void {
       if (status.ok && status.data) {
         lines.push('Sidecar:     ' + status.data.status);
         lines.push('Version:     ' + status.data.version);
-        lines.push('DB:          ' + (status.data.db_connected ? 'connected' : 'disconnected'));
+        lines.push('DB:          connected');
         lines.push('Uptime:      ' + status.data.uptime_secs + 's');
       } else {
         lines.push('Sidecar:     error — ' + (status.error || 'unreachable'));

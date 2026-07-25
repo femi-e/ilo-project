@@ -8,8 +8,9 @@
 import { spawn, ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import { ilo } from './ilo-client';
-import { EXT_VAR_DIR, LOCAL_EMBED_PORT } from './constants';
+import { EXTENSION_DIR, EXT_VAR_DIR, LOCAL_EMBED_PORT } from './constants';
 
 const STATE_KEY = '__ailo_ilo_manager__';
 
@@ -38,7 +39,7 @@ const ILO_MAX_UPTIME = process.env.ILO_MAX_UPTIME || '45';
 const MAX_RESTARTS = 3;
 
 const LLAMA_SERVER_BINARY = process.env.LLAMA_SERVER_BINARY || 'llama-server';
-const EMBED_MODEL_PATH = process.env.EMBED_MODEL_PATH || path.join(EXTENSION_DIR, '..', 'models', 'embeddings', 'bge-base-en-v1.5-q8_0.gguf');
+const EMBED_MODEL_PATH = process.env.EMBED_MODEL_PATH || path.join(os.homedir(), 'models', 'embeddings', 'bge-base-en-v1.5-q8_0.gguf');
 
 // ── API ───────────────────────────────────────────────
 

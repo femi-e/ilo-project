@@ -1,9 +1,9 @@
-//! Embedding generation via mistral.rs HTTP API.
+//! Embedding generation via llama.cpp HTTP API.
 //!
-//! Calls a local mistral.rs server running an embedding model (e.g., BGE-base-en-v1.5).
+//! Calls a local llama.cpp server running an embedding model (BGE-base GGUF).
 //! Falls back gracefully if the server is unreachable — vector search is simply disabled.
 //!
-//! Expected server: mistralrs serve embedding --model-id BAAI/bge-base-en-v1.5 --port 1235
+//! Expected server: llama-server --port 1235 --host 127.0.0.1 --embeddings --model <gguf>
 
 use serde_json::Value;
 
