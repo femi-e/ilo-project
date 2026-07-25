@@ -33,5 +33,5 @@ export const SEARXNG_MAX_LIMIT = 20;
 /** Default LLM inference server port (mistral.rs chat model). */
 export const MISTRAL_CHAT_PORT = 1234;
 
-/** Default embedding server port (mistral.rs embedding model). */
+/** Default embedding server port (llama.cpp embedding model). */
 export const MISTRAL_EMBED_PORT = 1235;

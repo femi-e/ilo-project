@@ -356,7 +356,7 @@ Rebuilt on startup and after every write batch from the node cache.
 
 | Aspect | Detail |
 |--------|--------|
-| Binary | `mem-arch/target/release/ilo` (built via `cargo build --release`) |
+| Binary | `mem-arch/target/release/ilo` (23 MB, built via `cargo build --release`) |
 | Socket | Unix domain socket at `var/ilo.sock` |
 | Max uptime | 45 minutes (configurable via `ILO_MAX_UPTIME`) |
 | Auto-restart | Up to 3 times on crash, 1s delay |

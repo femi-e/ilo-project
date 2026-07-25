@@ -37,7 +37,8 @@ const ILO_DB_PATH = process.env.ILO_DB_PATH || path.join(EXT_VAR_DIR, 'ilo_data.
 const ILO_MAX_UPTIME = process.env.ILO_MAX_UPTIME || '45';
 const MAX_RESTARTS = 3;
 
-const MISTRALRS_BINARY = process.env.MISTRALRS_BINARY || path.join(EXT_VAR_DIR, '..', '..', '.mistralrs', 'mistralrs');
+const LLAMA_SERVER_BINARY = process.env.LLAMA_SERVER_BINARY || 'llama-server';
+const EMBED_MODEL_PATH = process.env.EMBED_MODEL_PATH || path.join(EXTENSION_DIR, '..', 'models', 'embeddings', 'bge-base-en-v1.5-q8_0.gguf');
 
 // ── API ───────────────────────────────────────────────
 
@@ -135,7 +136,7 @@ export async function startIlo(): Promise<boolean> {
   return false;
 }
 
-/** Start the mistral.rs embedding server on port 1235. */
+/** Start the llama.cpp embedding server on port 1235. */
 async function startEmbedServer(): Promise<boolean> {
   // Check if it's already running
   try {
@@ -146,26 +147,29 @@ async function startEmbedServer(): Promise<boolean> {
     }
   } catch {}
 
-  if (!fs.existsSync(MISTRALRS_BINARY)) {
-    console.error(`[embed] mistralrs binary not found at ${MISTRALRS_BINARY}`);
-    console.error('[embed] install: curl -fsSL https://raw.githubusercontent.com/EricLBuehler/mistral.rs/master/install.sh | sh');
+  if (!fs.existsSync(EMBED_MODEL_PATH)) {
+    console.error(`[embed] Embedding model not found at ${EMBED_MODEL_PATH}`);
+    console.error('[embed] Download: curl -sL -o ~/models/embeddings/bge-base-en-v1.5-q8_0.gguf https://huggingface.co/CompendiumLabs/bge-base-en-v1.5-gguf/resolve/main/bge-base-en-v1.5-q8_0.gguf');
     return false;
   }
 
   const state = getState();
 
-  const proc = spawn(MISTRALRS_BINARY, [
-    'serve', 'embedding',
-    '--model-id', 'BAAI/bge-base-en-v1.5',
+  const proc = spawn(LLAMA_SERVER_BINARY, [
     '--port', String(MISTRAL_EMBED_PORT),
-    '--no-ui',
+    '--host', '127.0.0.1',
+    '--embeddings',
+    '--pooling', 'mean',
+    '--model', EMBED_MODEL_PATH,
+    '--ctx-size', '512',
+    '--n-gpu-layers', '99',
   ], {
     env: { ...process.env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
   state.embedProcess = proc;
-  console.error(`[embed] starting mistralrs embedding server on :${MISTRAL_EMBED_PORT}...`);
+  console.error(`[embed] starting llama-server (${EMBED_MODEL_PATH}) on :${MISTRAL_EMBED_PORT}...`);
 
   proc.stdout?.on('data', (d) => process.stdout.write(`[embed] ${d}`));
   proc.stderr?.on('data', (d) => process.stderr.write(`[embed] ${d}`));
@@ -175,8 +179,8 @@ async function startEmbedServer(): Promise<boolean> {
     state.embedProcess = null;
   });
 
-  // Wait for health check (up to 30s — first load downloads model)
-  for (let i = 0; i < 300; i++) {
+  // Wait for health check
+  for (let i = 0; i < 100; i++) {
     await new Promise((r) => setTimeout(r, 100));
     try {
       const res = await fetch(`http://127.0.0.1:${MISTRAL_EMBED_PORT}/`);
@@ -187,7 +191,7 @@ async function startEmbedServer(): Promise<boolean> {
     } catch {}
   }
 
-  console.error(`[embed] failed to start within 30 seconds`);
+  console.error(`[embed] failed to start within 10 seconds`);
   return false;
 }
 
