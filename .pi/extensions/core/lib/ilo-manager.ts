@@ -1,7 +1,7 @@
 // ============================================================================
-// lib/ilo-manager.ts — ILO + mistral.rs process lifecycle management
+// lib/ilo-manager.ts — ILO + llama.cpp process lifecycle management
 // ============================================================================
-// Spawns the ILO Rust sidecar and the mistral.rs embedding server,
+// Spawns the ILO Rust sidecar and the llama.cpp embedding server,
 // monitors health, restarts on failure.
 // ============================================================================
 
@@ -9,7 +9,7 @@ import { spawn, ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { ilo } from './ilo-client';
-import { EXT_VAR_DIR, MISTRAL_EMBED_PORT } from './constants';
+import { EXT_VAR_DIR, LOCAL_EMBED_PORT } from './constants';
 
 const STATE_KEY = '__ailo_ilo_manager__';
 
@@ -140,9 +140,9 @@ export async function startIlo(): Promise<boolean> {
 async function startEmbedServer(): Promise<boolean> {
   // Check if it's already running
   try {
-    const res = await fetch(`http://127.0.0.1:${MISTRAL_EMBED_PORT}/`);
+    const res = await fetch(`http://127.0.0.1:${LOCAL_EMBED_PORT}/`);
     if (res.ok) {
-      console.error(`[embed] Server already running on :${MISTRAL_EMBED_PORT}`);
+      console.error(`[embed] Server already running on :${LOCAL_EMBED_PORT}`);
       return true;
     }
   } catch {}
@@ -156,7 +156,7 @@ async function startEmbedServer(): Promise<boolean> {
   const state = getState();
 
   const proc = spawn(LLAMA_SERVER_BINARY, [
-    '--port', String(MISTRAL_EMBED_PORT),
+    '--port', String(LOCAL_EMBED_PORT),
     '--host', '127.0.0.1',
     '--embeddings',
     '--pooling', 'mean',
@@ -169,7 +169,7 @@ async function startEmbedServer(): Promise<boolean> {
   });
 
   state.embedProcess = proc;
-  console.error(`[embed] starting llama-server (${EMBED_MODEL_PATH}) on :${MISTRAL_EMBED_PORT}...`);
+  console.error(`[embed] starting llama-server (${EMBED_MODEL_PATH}) on :${LOCAL_EMBED_PORT}...`);
 
   proc.stdout?.on('data', (d) => process.stdout.write(`[embed] ${d}`));
   proc.stderr?.on('data', (d) => process.stderr.write(`[embed] ${d}`));
@@ -183,7 +183,7 @@ async function startEmbedServer(): Promise<boolean> {
   for (let i = 0; i < 100; i++) {
     await new Promise((r) => setTimeout(r, 100));
     try {
-      const res = await fetch(`http://127.0.0.1:${MISTRAL_EMBED_PORT}/`);
+      const res = await fetch(`http://127.0.0.1:${LOCAL_EMBED_PORT}/`);
       if (res.ok) {
         console.error(`[embed] started successfully`);
         return true;
@@ -231,7 +231,7 @@ export async function isIloHealthy(): Promise<boolean> {
 /** Check if the embedding server is responding. */
 export async function isEmbedHealthy(): Promise<boolean> {
   try {
-    const res = await fetch(`http://127.0.0.1:${MISTRAL_EMBED_PORT}/`);
+    const res = await fetch(`http://127.0.0.1:${LOCAL_EMBED_PORT}/`);
     return res.ok;
   } catch {
     return false;

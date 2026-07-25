@@ -30,8 +30,11 @@ export const SEARXNG_PORT = 18089;
 export const SEARXNG_DEFAULT_LIMIT = 5;
 export const SEARXNG_MAX_LIMIT = 20;
 
-/** Default LLM inference server port (mistral.rs chat model). */
-export const MISTRAL_CHAT_PORT = 1234;
+/** Starting port for local inference server discovery (llama.cpp, etc.). */
+export const LOCAL_CHAT_PORT_START = 1234;
+
+/** Ending port for local inference server discovery (inclusive). */
+export const LOCAL_CHAT_PORT_END = 1240;
 
 /** Default embedding server port (llama.cpp embedding model). */
-export const MISTRAL_EMBED_PORT = 1235;
+export const LOCAL_EMBED_PORT = 1235;

@@ -3,8 +3,8 @@
 // ============================================================================
 // Pi discovers this file on startup. It:
 //   1. Registers the ILO interaction loop hooks
-//   2. Starts the ILO Rust sidecar + mistral.rs embedding server
-//   3. Registers mistral.rs as a local LLM provider (auto-discovers models)
+//   2. Starts the ILO Rust sidecar + llama.cpp embedding server
+//   3. Registers local inference servers as pi providers (auto-discovers models)
 //   4. Provides LLM-invokable tools for entity lookup and linking
 // ============================================================================
 
@@ -19,7 +19,7 @@ import { registerWebScrapeTool } from './tools/web-scrape';
 import { registerWebCrawlTool } from './tools/web-crawl';
 import { registerTaskTool } from './tools/task';
 import { registerDiagnosticsTool } from './tools/diagnostics';
-import { MISTRAL_CHAT_PORT } from './lib/constants';
+import { LOCAL_CHAT_PORT_START, LOCAL_CHAT_PORT_END } from './lib/constants';
 
 export default async function (pi: ExtensionAPI): Promise<void> {
   // ── Register interaction loop hooks ────────────────
@@ -35,7 +35,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   registerTaskTool(pi);
   registerDiagnosticsTool(pi);
 
-  // ── Register mistral.rs as a local LLM provider ───
+  // ── Register local inference servers as pi providers ───
   await registerMistralProvider(pi);
 
   // ── Guard: protect ILO database files from accidental deletion ──
@@ -59,39 +59,81 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 }
 
 /**
- * Register mistral.rs as a pi provider with auto-discovery of loaded models.
- * Scans the configured chat port and registers all available models.
+ * Register local inference servers as pi providers with auto-discovery.
+ * Scans a range of ports for running servers (mistral.rs, llama.cpp, etc.)
+ * and registers all available models.
  */
 async function registerMistralProvider(pi: ExtensionAPI): Promise<void> {
-  const baseUrl = `http://127.0.0.1:${MISTRAL_CHAT_PORT}/v1`;
+  const models: Array<{
+    id: string;
+    baseUrl: string;
+    name: string;
+  }> = [];
 
-  try {
-    const res = await fetch(`${baseUrl}/models`);
-    if (!res.ok) {
-      console.warn(`[mistral] Server at :${MISTRAL_CHAT_PORT} not responding — skipping provider registration`);
-      return;
+  // Scan configured port range for inference servers
+  for (let port = LOCAL_CHAT_PORT_START; port <= LOCAL_CHAT_PORT_END; port++) {
+    const baseUrl = `http://127.0.0.1:${port}/v1`;
+    try {
+      const res = await fetch(`${baseUrl}/models`, {
+        signal: AbortSignal.timeout(2000),
+      });
+      if (!res.ok) continue;
+
+      const { data } = await res.json();
+      if (!data || data.length === 0) continue;
+
+      for (const m of data) {
+        models.push({
+          id: m.id,
+          baseUrl,
+          name: m.id.replace(/^.*\//, ''),
+        });
+        console.error(`[local] Discovered model "${m.id}" on :${port}`);
+      }
+    } catch {
+      // Port not running a compatible server — skip
+      continue;
     }
+  }
 
-    const { data } = await res.json();
+  if (models.length === 0) {
+    console.warn('[local] No local inference servers found');
+    console.warn(`[local] Scanned ports ${LOCAL_CHAT_PORT_START}-${LOCAL_CHAT_PORT_END}`);
+    return;
+  }
 
-    if (!data || data.length === 0) {
-      console.warn('[mistral] No models available on server');
-      return;
-    }
+  // Group by baseUrl — each server gets one provider entry with its models
+  // For simplicity, register each server under its own provider name.
+  // If multiple servers are found, use the first server's baseUrl and list all models.
+  // pi will route by model ID, sending each model to the right server via the baseUrl.
+  // Actually, pi's provider model doesn't support per-model baseUrls out of the box.
+  // So we register one provider per port with unique names.
+  const servers = new Map<string, typeof models>();
+  for (const m of models) {
+    if (!servers.has(m.baseUrl)) servers.set(m.baseUrl, []);
+    servers.get(m.baseUrl)!.push(m);
+  }
 
-    pi.registerProvider('mistral', {
+  let providerIndex = 0;
+  for (const [baseUrl, serverModels] of servers) {
+    const port = baseUrl.match(/:([0-9]+)\//)?.[1] || 'local';
+    const providerName = serverModels.length === 1
+      ? `local-${serverModels[0].name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`
+      : `local-serve`;
+
+    pi.registerProvider(providerName, {
       baseUrl,
       apiKey: 'local',
       api: 'openai-completions',
       compat: {
-        supportsDeveloperRole: false,       // mistral.rs rejects 'developer' role
-        supportsReasoningEffort: false,     // Qwen/other models auto-output reasoning_content
-        maxTokensField: 'max_tokens',       // use standard OpenAI field
+        supportsDeveloperRole: false,
+        supportsReasoningEffort: false,
+        maxTokensField: 'max_tokens',
       },
-      models: data.map((m: any) => ({
+      models: serverModels.map((m) => ({
         id: m.id,
-        name: m.id.replace(/^.*\//, ''),   // "Qwen/Qwen3.5-9B" → "Qwen3.5-9B"
-        reasoning: false,                    // thinking is auto, not pi-controlled
+        name: m.name,
+        reasoning: false,
         input: ['text'],
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         contextWindow: 128000,
@@ -99,9 +141,7 @@ async function registerMistralProvider(pi: ExtensionAPI): Promise<void> {
       })),
     });
 
-    console.error(`[mistral] Registered provider with ${data.length} model(s)`);
-  } catch (err) {
-    console.warn(`[mistral] Could not connect to inference server at ${baseUrl}: ${err}`);
-    console.warn('[mistral] Start with: mistralrs serve --model-id <MODEL> --port 1234');
+    console.error(`[local] Registered provider "${providerName}" with ${serverModels.length} model(s) on port ${port}`);
+    providerIndex++;
   }
 }
