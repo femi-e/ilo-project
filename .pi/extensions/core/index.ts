@@ -12,14 +12,14 @@ import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { registerContextHooks } from './events/context';
 import { registerTurnHooks } from './events/turn';
 import { registerInputHooks } from './events/input';
-import { startIlo, stopIlo, keepChatAlive } from './lib/ilo-manager';
+import { startIlo, stopIlo, keepChatAlive, setRegisteredProviders, setUnregisterProviderCallback } from './lib/ilo-manager';
 import { registerIloTools } from './lib/ilo-tools';
 import { registerWebSearchTool } from './tools/web-search';
 import { registerWebScrapeTool } from './tools/web-scrape';
 import { registerWebCrawlTool } from './tools/web-crawl';
 import { registerTaskTool } from './tools/task';
 import { registerDiagnosticsTool } from './tools/diagnostics';
-import { LOCAL_CHAT_PORT_START, LOCAL_CHAT_PORT_END } from './lib/constants';
+import { LOCAL_CHAT_PORT_START, LOCAL_CHAT_PORT_END, LOCAL_EMBED_PORT } from './lib/constants';
 
 export default async function (pi: ExtensionAPI): Promise<void> {
   // ── Register interaction loop hooks ────────────────
@@ -36,7 +36,14 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   registerDiagnosticsTool(pi);
 
   // ── Register local inference servers as pi providers ───
-  await registerMistralProvider(pi);
+  const providerInfo = await registerMistralProvider(pi);
+  // Track which providers are for embed vs chat so they can be unregistered on server stop
+  if (providerInfo) {
+    setRegisteredProviders(providerInfo);
+    setUnregisterProviderCallback((name: string) => {
+      try { pi.unregisterProvider(name); } catch { /* already gone */ }
+    });
+  }
 
   // ── Guard: protect ILO database files from accidental deletion ──
   pi.on('tool_call', async (event: any) => {
@@ -70,8 +77,9 @@ export default async function (pi: ExtensionAPI): Promise<void> {
  * Register local inference servers as pi providers with auto-discovery.
  * Scans a range of ports for running servers (mistral.rs, llama.cpp, etc.)
  * and registers all available models.
+ * Returns the provider names split by server type (embed vs chat) for later unregistration.
  */
-async function registerMistralProvider(pi: ExtensionAPI): Promise<void> {
+async function registerMistralProvider(pi: ExtensionAPI): Promise<{ embed: string[]; chat: string[] } | null> {
   const models: Array<{
     id: string;
     baseUrl: string;
@@ -107,7 +115,7 @@ async function registerMistralProvider(pi: ExtensionAPI): Promise<void> {
   if (models.length === 0) {
     console.warn('[local] No local inference servers found');
     console.warn(`[local] Scanned ports ${LOCAL_CHAT_PORT_START}-${LOCAL_CHAT_PORT_END}`);
-    return;
+    return null;
   }
 
   // Group by baseUrl — each server gets one provider entry with its models
@@ -122,7 +130,10 @@ async function registerMistralProvider(pi: ExtensionAPI): Promise<void> {
     servers.get(m.baseUrl)!.push(m);
   }
 
-  let providerIndex = 0;
+  // Track provider names per server type for later unregistration
+  const registered: { embed: string[]; chat: string[] } = { embed: [], chat: [] };
+  const embedPort = String(LOCAL_EMBED_PORT);
+
   for (const [baseUrl, serverModels] of servers) {
     const port = baseUrl.match(/:([0-9]+)\//)?.[1] || 'local';
     const providerName = serverModels.length === 1
@@ -149,7 +160,12 @@ async function registerMistralProvider(pi: ExtensionAPI): Promise<void> {
       })),
     });
 
-    console.error(`[local] Registered provider "${providerName}" with ${serverModels.length} model(s) on port ${port}`);
-    providerIndex++;
+    // Classify by port: embed server lives on LOCAL_EMBED_PORT (1235), chat on all others
+    const serverType = port === embedPort ? 'embed' : 'chat';
+    registered[serverType].push(providerName);
+
+    console.error(`[local] Registered ${serverType} provider "${providerName}" with ${serverModels.length} model(s) on port ${port}`);
   }
+
+  return registered;
 }

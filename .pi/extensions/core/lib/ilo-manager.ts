@@ -22,12 +22,16 @@ interface IloManagerState {
   startedAt: number;
   restartCount: number;
   chatIdleTimer: ReturnType<typeof setTimeout> | null;
+  /** Provider names registered with pi for each server type. Unregistered on stop. */
+  registeredProviders: { embed: string[]; chat: string[] };
+  /** Callback set by index.ts to unregister providers via pi.unregisterProvider(). */
+  unregisterProvider: ((name: string) => void) | null;
 }
 
 function getState(): IloManagerState {
   let state = (globalThis as any)[STATE_KEY];
   if (!state) {
-    state = { iloProcess: null, embedProcess: null, chatProcess: null, startedAt: 0, restartCount: 0, chatIdleTimer: null };
+    state = { iloProcess: null, embedProcess: null, chatProcess: null, startedAt: 0, restartCount: 0, chatIdleTimer: null, registeredProviders: { embed: [], chat: [] }, unregisterProvider: null };
     (globalThis as any)[STATE_KEY] = state;
   }
   return state;
@@ -49,6 +53,38 @@ const CHAT_MODEL_PATH = process.env.LLAMA_CHAT_MODEL || '';
 
 /** How long to wait (ms) before stopping the chat server if the local model isn't selected. */
 const CHAT_IDLE_TIMEOUT = parseInt(process.env.LOCAL_CHAT_IDLE_TIMEOUT || '300000', 10); // 5 min default
+
+// ── Provider registration tracking ───────────────────
+
+/**
+ * Register providers that pi knows about, keyed by server type.
+ * Embed providers are on port 1235; chat providers on ports 1234, 1236-1240.
+ * These are unregistered automatically when the corresponding server stops.
+ */
+export function setRegisteredProviders(providers: { embed: string[]; chat: string[] }): void {
+  getState().registeredProviders = providers;
+}
+
+/** Set the callback to unregister a provider from pi. Called from index.ts. */
+export function setUnregisterProviderCallback(cb: (name: string) => void): void {
+  getState().unregisterProvider = cb;
+}
+
+function unregisterProviders(types: ('embed' | 'chat')[]): void {
+  const state = getState();
+  if (!state.unregisterProvider) return;
+  for (const t of types) {
+    for (const name of state.registeredProviders[t]) {
+      try {
+        state.unregisterProvider(name);
+        console.error(`[ilo] Unregistered provider "${name}" (${t})`);
+      } catch (err) {
+        console.error(`[ilo] Failed to unregister provider "${name}":`, err);
+      }
+    }
+    state.registeredProviders[t] = [];
+  }
+}
 
 // ── API ───────────────────────────────────────────────
 
@@ -190,6 +226,8 @@ async function startEmbedServer(): Promise<boolean> {
   proc.on('exit', (code) => {
     console.error(`[embed] process exited with code ${code}`);
     state.embedProcess = null;
+    // If the server crashed unexpectedly, unregister its providers
+    unregisterProviders(['embed']);
   });
 
   for (let i = 0; i < 100; i++) {
@@ -245,6 +283,8 @@ async function startChatServer(): Promise<boolean> {
   proc.on('exit', (code) => {
     console.error(`[chat] process exited with code ${code}`);
     state.chatProcess = null;
+    // If the server crashed unexpectedly, unregister its providers
+    unregisterProviders(['chat']);
   });
 
   for (let i = 0; i < 50; i++) {
@@ -283,13 +323,14 @@ export function keepChatAlive(): void {
   }
 }
 
-/** Stop the chat server. */
+/** Stop the chat server and unregister its providers from pi. */
 function stopChatServer(): void {
   const state = getState();
   if (state.chatIdleTimer) {
     clearTimeout(state.chatIdleTimer);
     state.chatIdleTimer = null;
   }
+  unregisterProviders(['chat']);
   if (state.chatProcess) {
     state.chatProcess.kill('SIGTERM');
     setTimeout(() => {
@@ -299,12 +340,10 @@ function stopChatServer(): void {
   }
 }
 
-/** Stop all managed processes. */
-export function stopIlo(): void {
+/** Stop the embedding server and unregister its providers from pi. */
+function stopEmbedServer(): void {
   const state = getState();
-
-  stopChatServer();
-
+  unregisterProviders(['embed']);
   if (state.embedProcess) {
     state.embedProcess.kill('SIGTERM');
     setTimeout(() => {
@@ -312,6 +351,14 @@ export function stopIlo(): void {
     }, 5000);
     state.embedProcess = null;
   }
+}
+
+/** Stop all managed processes and unregister all providers from pi. */
+export function stopIlo(): void {
+  const state = getState();
+
+  stopChatServer();
+  stopEmbedServer();
 
   if (state.iloProcess) {
     state.iloProcess.kill('SIGTERM');
