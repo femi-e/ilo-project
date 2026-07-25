@@ -220,8 +220,13 @@ async function startEmbedServer(): Promise<boolean> {
   state.embedProcess = proc;
   console.error(`[embed] starting llama-server (${EMBED_MODEL_PATH}) on :${LOCAL_EMBED_PORT}...`);
 
-  proc.stdout?.on('data', (d) => process.stdout.write(`[embed] ${d}`));
-  proc.stderr?.on('data', (d) => process.stderr.write(`[embed] ${d}`));
+  // Write verbose embed server logs to file instead of spamming the terminal
+  const embedLogPath = path.join(EXT_VAR_DIR, 'embed.log');
+  const embedLogStream = fs.createWriteStream(embedLogPath, { flags: 'a' });
+  proc.stdout?.on('data', (d) => embedLogStream.write(`[embed:stdout] ${d}`));
+  proc.stderr?.on('data', (d) => embedLogStream.write(`[embed:stderr] ${d}`));
+  embedLogStream.write(`--- Embed server started on :${LOCAL_EMBED_PORT} at ${new Date().toISOString()} ---\n`);
+  console.error(`[embed] Logging to ${embedLogPath}`);
 
   proc.on('exit', (code) => {
     console.error(`[embed] process exited with code ${code}`);
