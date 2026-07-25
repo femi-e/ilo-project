@@ -12,7 +12,7 @@ import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { registerContextHooks } from './events/context';
 import { registerTurnHooks } from './events/turn';
 import { registerInputHooks } from './events/input';
-import { startIlo, stopIlo } from './lib/ilo-manager';
+import { startIlo, stopIlo, keepChatAlive } from './lib/ilo-manager';
 import { registerIloTools } from './lib/ilo-tools';
 import { registerWebSearchTool } from './tools/web-search';
 import { registerWebScrapeTool } from './tools/web-scrape';
@@ -54,8 +54,16 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     console.warn('[ilo] ILO sidecar failed to start — running without memory layer');
   }
 
+  // ── Watch for local model selection (keeps chat server alive) ──
+  pi.on('model_select', (event: any) => {
+    if (event.model?.provider?.startsWith('local-')) {
+      keepChatAlive();
+    }
+  });
+
   // ── Cleanup on shutdown ───────────────────────────
   process.on('SIGTERM', () => stopIlo());
+  pi.on('session_shutdown', () => stopIlo());
 }
 
 /**

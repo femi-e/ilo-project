@@ -1,8 +1,9 @@
 // ============================================================================
 // lib/ilo-manager.ts — ILO + llama.cpp process lifecycle management
 // ============================================================================
-// Spawns the ILO Rust sidecar and the llama.cpp embedding server,
-// monitors health, restarts on failure.
+// Spawns the ILO Rust sidecar, llama.cpp embedding server, and optionally
+// a llama.cpp chat server. The chat server auto-stops after 5 minutes
+// if the user hasn't selected a local model in pi.
 // ============================================================================
 
 import { spawn, ChildProcess } from 'node:child_process';
@@ -10,21 +11,23 @@ import * as path from 'node:path';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import { ilo } from './ilo-client';
-import { EXTENSION_DIR, EXT_VAR_DIR, LOCAL_EMBED_PORT } from './constants';
+import { EXTENSION_DIR, EXT_VAR_DIR, LOCAL_EMBED_PORT, LOCAL_CHAT_PORT_START } from './constants';
 
 const STATE_KEY = '__ailo_ilo_manager__';
 
 interface IloManagerState {
   iloProcess: ChildProcess | null;
   embedProcess: ChildProcess | null;
+  chatProcess: ChildProcess | null;
   startedAt: number;
   restartCount: number;
+  chatIdleTimer: ReturnType<typeof setTimeout> | null;
 }
 
 function getState(): IloManagerState {
   let state = (globalThis as any)[STATE_KEY];
   if (!state) {
-    state = { iloProcess: null, embedProcess: null, startedAt: 0, restartCount: 0 };
+    state = { iloProcess: null, embedProcess: null, chatProcess: null, startedAt: 0, restartCount: 0, chatIdleTimer: null };
     (globalThis as any)[STATE_KEY] = state;
   }
   return state;
@@ -41,9 +44,15 @@ const MAX_RESTARTS = 3;
 const LLAMA_SERVER_BINARY = process.env.LLAMA_SERVER_BINARY || 'llama-server';
 const EMBED_MODEL_PATH = process.env.EMBED_MODEL_PATH || path.join(os.homedir(), 'models', 'embeddings', 'bge-base-en-v1.5-q8_0.gguf');
 
+/** GGUF model to use for the chat server. Set env LLAMA_CHAT_MODEL to override. */
+const CHAT_MODEL_PATH = process.env.LLAMA_CHAT_MODEL || '';
+
+/** How long to wait (ms) before stopping the chat server if the local model isn't selected. */
+const CHAT_IDLE_TIMEOUT = parseInt(process.env.LOCAL_CHAT_IDLE_TIMEOUT || '300000', 10); // 5 min default
+
 // ── API ───────────────────────────────────────────────
 
-/** Start the ILO sidecar and the embedding server if not already running. */
+/** Start the ILO sidecar, embedding server, and chat server. */
 export async function startIlo(): Promise<boolean> {
   const state = getState();
   let allOk = true;
@@ -55,8 +64,18 @@ export async function startIlo(): Promise<boolean> {
     allOk = false;
   }
 
+  // ── Start chat server (best-effort, requires CHAT_MODEL_PATH) ──
+  if (CHAT_MODEL_PATH) {
+    const chatOk = await startChatServer();
+    if (!chatOk) {
+      console.warn('[ilo] Chat server failed to start — local inference unavailable');
+    }
+  } else {
+    console.warn('[ilo] No chat model configured — set LLAMA_CHAT_MODEL to auto-start a local LLM');
+    console.warn('[ilo] Example: LLAMA_CHAT_MODEL=~/models/qwen3.5-9b.gguf pi');
+  }
+
   // ── Start ILO sidecar ──
-  // Verify binary exists
   if (!fs.existsSync(ILO_BINARY)) {
     console.error(`[ilo] binary not found at ${ILO_BINARY}`);
     console.error('[ilo] run: cd mem-arch && cargo build --release');
@@ -71,7 +90,6 @@ export async function startIlo(): Promise<boolean> {
     stopIlo();
   }
 
-  // Kill any stale ILO processes using PID file
   const pidFile = path.join(EXT_VAR_DIR, 'ilo.pid');
   try {
     const oldPid = parseInt(fs.readFileSync(pidFile, 'utf-8'), 10);
@@ -79,21 +97,18 @@ export async function startIlo(): Promise<boolean> {
     await new Promise((r) => setTimeout(r, 1000));
   } catch {}
 
-  // Remove stale socket (if using UDS still)
   const socketPath = path.join(EXT_VAR_DIR, 'ilo.sock');
   try { fs.unlinkSync(socketPath); } catch {}
 
-  // Ensure var/ directory exists
   const varDir = path.dirname(ILO_DB_PATH);
   fs.mkdirSync(varDir, { recursive: true });
 
-  // Spawn ILO
   const proc = spawn(ILO_BINARY, [], {
     env: {
       ...process.env,
       ILO_PORT,
       ILO_DB_PATH,
-      ILO_MAX_UPTIME: '0',      // No max uptime — managed by pi instead
+      ILO_MAX_UPTIME: '0',
       RUST_LOG: process.env.RUST_LOG || 'info',
     },
     cwd: path.dirname(ILO_BINARY),
@@ -107,7 +122,6 @@ export async function startIlo(): Promise<boolean> {
   proc.stdout?.on('data', (d) => process.stdout.write(`[ilo] ${d}`));
   proc.stderr?.on('data', (d) => process.stderr.write(`[ilo] ${d}`));
 
-  // Write PID file
   try { fs.writeFileSync(pidFile, String(proc.pid)); } catch {}
 
   proc.on('exit', (code) => {
@@ -121,7 +135,6 @@ export async function startIlo(): Promise<boolean> {
     }
   });
 
-  // Wait for health check — poll fast (100ms interval, 3s max)
   for (let i = 0; i < 30; i++) {
     await new Promise((r) => setTimeout(r, 100));
     try {
@@ -139,7 +152,6 @@ export async function startIlo(): Promise<boolean> {
 
 /** Start the llama.cpp embedding server on port 1235. */
 async function startEmbedServer(): Promise<boolean> {
-  // Check if it's already running
   try {
     const res = await fetch(`http://127.0.0.1:${LOCAL_EMBED_PORT}/`);
     if (res.ok) {
@@ -180,7 +192,6 @@ async function startEmbedServer(): Promise<boolean> {
     state.embedProcess = null;
   });
 
-  // Wait for health check
   for (let i = 0; i < 100; i++) {
     await new Promise((r) => setTimeout(r, 100));
     try {
@@ -196,11 +207,104 @@ async function startEmbedServer(): Promise<boolean> {
   return false;
 }
 
-/** Stop the ILO sidecar and embedding server gracefully. */
+/** Start the llama.cpp chat server on the first available port (1234). */
+async function startChatServer(): Promise<boolean> {
+  try {
+    const res = await fetch(`http://127.0.0.1:${LOCAL_CHAT_PORT_START}/`);
+    if (res.ok) {
+      console.error(`[chat] Server already running on :${LOCAL_CHAT_PORT_START}`);
+      scheduleChatShutdown();
+      return true;
+    }
+  } catch {}
+
+  if (!fs.existsSync(CHAT_MODEL_PATH)) {
+    console.error(`[chat] Chat model not found at ${CHAT_MODEL_PATH}`);
+    return false;
+  }
+
+  const state = getState();
+
+  const proc = spawn(LLAMA_SERVER_BINARY, [
+    '--port', String(LOCAL_CHAT_PORT_START),
+    '--host', '127.0.0.1',
+    '--model', CHAT_MODEL_PATH,
+    '--ctx-size', '32768',
+    '--n-gpu-layers', '99',
+  ], {
+    env: { ...process.env },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  state.chatProcess = proc;
+  console.error(`[chat] starting llama-server (${CHAT_MODEL_PATH}) on :${LOCAL_CHAT_PORT_START}...`);
+
+  proc.stdout?.on('data', (d) => process.stdout.write(`[chat] ${d}`));
+  proc.stderr?.on('data', (d) => process.stderr.write(`[chat] ${d}`));
+
+  proc.on('exit', (code) => {
+    console.error(`[chat] process exited with code ${code}`);
+    state.chatProcess = null;
+  });
+
+  for (let i = 0; i < 50; i++) {
+    await new Promise((r) => setTimeout(r, 100));
+    try {
+      const res = await fetch(`http://127.0.0.1:${LOCAL_CHAT_PORT_START}/`);
+      if (res.ok) {
+        console.error(`[chat] started successfully`);
+        scheduleChatShutdown();
+        return true;
+      }
+    } catch {}
+  }
+
+  console.error(`[chat] failed to start within 5 seconds`);
+  return false;
+}
+
+/** Schedule chat server shutdown after idle timeout. Call keepChatAlive() to cancel. */
+function scheduleChatShutdown() {
+  const state = getState();
+  if (state.chatIdleTimer) clearTimeout(state.chatIdleTimer);
+  state.chatIdleTimer = setTimeout(() => {
+    console.error(`[chat] No local model selected within ${CHAT_IDLE_TIMEOUT / 1000}s — stopping chat server`);
+    stopChatServer();
+  }, CHAT_IDLE_TIMEOUT);
+}
+
+/** Call this when the user selects a local model — keeps the chat server alive. */
+export function keepChatAlive(): void {
+  const state = getState();
+  if (state.chatIdleTimer) {
+    clearTimeout(state.chatIdleTimer);
+    state.chatIdleTimer = null;
+    console.error('[chat] Local model selected — keeping chat server alive');
+  }
+}
+
+/** Stop the chat server. */
+function stopChatServer(): void {
+  const state = getState();
+  if (state.chatIdleTimer) {
+    clearTimeout(state.chatIdleTimer);
+    state.chatIdleTimer = null;
+  }
+  if (state.chatProcess) {
+    state.chatProcess.kill('SIGTERM');
+    setTimeout(() => {
+      if (state.chatProcess) state.chatProcess.kill('SIGKILL');
+    }, 5000);
+    state.chatProcess = null;
+  }
+}
+
+/** Stop all managed processes. */
 export function stopIlo(): void {
   const state = getState();
 
-  // Stop embedding server
+  stopChatServer();
+
   if (state.embedProcess) {
     state.embedProcess.kill('SIGTERM');
     setTimeout(() => {
@@ -209,7 +313,6 @@ export function stopIlo(): void {
     state.embedProcess = null;
   }
 
-  // Stop ILO
   if (state.iloProcess) {
     state.iloProcess.kill('SIGTERM');
     setTimeout(() => {
@@ -239,10 +342,7 @@ export async function isEmbedHealthy(): Promise<boolean> {
   }
 }
 
-/**
- * Ensure the ILO sidecar is running and responsive.
- * Call before any ILO API operation from event hooks.
- */
+/** Ensure the ILO sidecar is running. */
 export async function ensureIlo(): Promise<boolean> {
   const state = getState();
 
