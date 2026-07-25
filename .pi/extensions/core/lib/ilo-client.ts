@@ -93,25 +93,69 @@ class IloClient {
       ].join('\r\n');
 
       const sock = net.createConnection(this.socketPath);
-      let data = '';
+      let buffer = '';
+      let contentLength = -1;
+      let headersDone = false;
       let timer = setTimeout(() => {
         sock.destroy();
         resolve({ ok: false, error: 'timeout' });
       }, this.timeout);
 
-      sock.on('connect', () => sock.write(req));
-      sock.on('data', (chunk) => { data += chunk; });
-      sock.on('end', () => {
-        clearTimeout(timer);
-        const parts = data.split('\r\n\r\n');
-        const bodyStr = parts[1] || '';
-        if (!bodyStr) return resolve({ ok: false, error: 'empty response' });
+      function tryParse() {
+        const parts = buffer.split('\r\n\r\n');
+        if (parts.length < 2) return false;
+        const headerBlock = parts[0];
+        const bodyStr = parts.slice(1).join('\r\n\r\n');
+        headersDone = true;
+
+        // Parse Content-Length from headers
+        const clMatch = headerBlock.match(/content-length:\s*(\d+)/i);
+        if (clMatch) contentLength = parseInt(clMatch[1], 10);
+
+        // Check if we have the full body
+        if (contentLength >= 0 && bodyStr.length < contentLength) return false;
+        return tryParseBody(bodyStr);
+      }
+
+      function tryParseBody(bodyStr: string): boolean {
+        if (!bodyStr) {
+          resolve({ ok: false, error: 'empty response' });
+          return true;
+        }
         try {
           const parsed = JSON.parse(bodyStr);
           resolve({ ok: true, data: parsed });
+          return true;
         } catch {
-          resolve({ ok: false, error: 'parse error' });
+          // If we know the full content length and still can't parse, fail
+          if (contentLength >= 0 && bodyStr.length >= contentLength) {
+            resolve({ ok: false, error: 'parse error' });
+            return true;
+          }
+          return false; // wait for more data
         }
+      }
+
+      sock.on('connect', () => sock.write(req));
+      sock.on('data', (chunk) => {
+        buffer += chunk.toString();
+        if (!headersDone) {
+          if (tryParse()) {
+            clearTimeout(timer);
+            sock.end();
+          }
+        }
+      });
+      sock.on('end', () => {
+        clearTimeout(timer);
+        if (!headersDone || !buffer) {
+          resolve({ ok: false, error: 'empty response' });
+          return;
+        }
+        // Final attempt — parse whatever we have
+        const parts = buffer.split('\r\n\r\n');
+        const bodyStr = parts.slice(1).join('\r\n\r\n');
+        tryParseBody(bodyStr);
       });
       sock.on('error', (err) => {
         clearTimeout(timer);

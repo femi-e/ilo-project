@@ -3,9 +3,8 @@
 // ============================================================================
 // On each turn before the LLM call:
 //   1. Inject system instructions (once per session)
-//   2. Quick FTS check — do any entities exist matching the query?
-//   3. If yes, inject a one-line hint about using memory_search
-//   4. Full recall is deferred to the memory_search tool (LLM-driven)
+//   2. Full memory recall — inject actual context as a compact block
+//   3. Track injected entities to avoid repetition across turns
 // ============================================================================
 
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
@@ -45,7 +44,16 @@ const WORKFLOW_SECTION = `# How to Work
 
 - NEVER delete or modify the ILO database files (\`var/ilo_data.lbug\`, \`var/ilo_data.lbug.wal\`) or the Unix socket (\`var/ilo.sock\`) without explicit user confirmation. These files persist across all sessions. Deleting them destroys all stored memory.`;
 
-let SYSTEM_HINT_INJECTED = false;
+let SYSTEM_INSTRUCTIONS_INJECTED = false;
+
+// ── Memory context state (per session) ──
+
+interface InjectedMemory {
+  nodeId: string;
+  label: string;
+}
+
+let injectedMemories: InjectedMemory[] = [];
 
 /// Dynamically build the tools section from pi's tool registry.
 function buildToolsSection(pi: any): string {
@@ -67,7 +75,38 @@ function buildToolsSection(pi: any): string {
   }
 }
 
+/// Format search results into a compact memory context block.
+/// Only includes entity nodes (skips turns and claims which are verbose).
+/// Returns null if nothing new to inject.
+function formatMemoryContext(nodes: any[], maxNodes: number = 5): string | null {
+  if (!nodes || nodes.length === 0) return null;
 
+  // Filter to only entity nodes (skip turns, claims — too verbose for context)
+  const entityNodes = nodes.filter(n => n.node_type === 'entity').slice(0, maxNodes);
+  if (entityNodes.length === 0) return null;
+
+  const lines: string[] = ['## Memory Context'];
+  let newCount = 0;
+
+  for (const node of entityNodes) {
+    const alreadyInjected = injectedMemories.some(m => m.nodeId === node.id);
+    const isTopResult = node.relevance >= 0.9;
+
+    if (alreadyInjected && !isTopResult) continue;
+
+    if (!alreadyInjected) {
+      injectedMemories.push({ nodeId: node.id, label: node.label });
+    }
+
+    const confidence = (node.confidence || 0.5).toFixed(2);
+    const tags = (node.tags || []).filter(Boolean).join(', ');
+    lines.push(`  - ${node.label} (${confidence})${tags ? ` — ${tags}` : ''}`);
+    newCount++;
+  }
+
+  if (newCount === 0) return null;
+  return lines.join('\n');
+}
 
 // ═══════════════════════════════════════════════════════════
 // Handler registration
@@ -82,39 +121,52 @@ export function registerContextHooks(pi: ExtensionAPI): void {
     WORKFLOW_SECTION,
   ].filter(Boolean).join('\n\n');
 
+  // Reset session state when a new session starts
+  pi.on('session_start', () => {
+    SYSTEM_INSTRUCTIONS_INJECTED = false;
+    injectedMemories = [];
+  });
+
   pi.on('before_agent_start', async (event: any, ctx: any) => {
     const state = getState();
     const userText = state.lastUserText;
+    let additions = '';
 
     // Inject system instructions once per session
-    if (!SYSTEM_HINT_INJECTED && ctx.addSystemPrompt) {
-      ctx.addSystemPrompt(systemInstructions);
-      SYSTEM_HINT_INJECTED = true;
+    if (!SYSTEM_INSTRUCTIONS_INJECTED) {
+      additions += '\n\n' + systemInstructions;
+      SYSTEM_INSTRUCTIONS_INJECTED = true;
+      // Reset injected memory tracking for new session
+      injectedMemories = [];
     }
 
-    // Skip for very short inputs
-    if (!userText || userText.length < 10) return;
+    // Skip memory retrieval for very short inputs
+    if (userText && userText.length >= 10) {
+      const healthy = await ensureIlo();
+      if (healthy) {
+        try {
+          // Full recall with graph expansion (list=false)
+          const res = await ilo.search(userText, false, undefined);
+          const nodes = res.data?.nodes || [];
+          const total = res.data?.total || 0;
 
-    // Ensure sidecar is alive
-    const healthy = await ensureIlo();
-    if (!healthy) return;
-
-    try {
-      // Cheap check: FTS search (list mode = no graph expansion, fast)
-      // If no entities match, skip entirely — zero cost for irrelevant queries
-      const check = await ilo.search(userText, true, undefined);
-      const total = check.data?.total || 0;
-      if (total === 0) return;
-
-      // Inject a one-line hint — LLM decides whether to use memory_search
-      ctx.addSystemPrompt(`@memory [hint: ${total} relevant ${total === 1 ? 'entry' : 'entries'} exist. Use memory_search() to retrieve them.]`);
-
-      // Notify on first hit
-      if (ctx?.ui) {
-        ctx.ui.notify(`Memory hint: ${total} relevant entries`, 'info');
+          if (nodes.length > 0) {
+            const contextBlock = formatMemoryContext(nodes, 5);
+            if (contextBlock) {
+              additions += '\n' + contextBlock;
+            }
+            if (ctx?.ui && total > 0) {
+              ctx.ui.notify(`Memory: ${total} relevant entries`, 'info');
+            }
+          }
+        } catch (err) {
+          console.error('[ilo-context] recall failed:', err);
+        }
       }
-    } catch (err) {
-      console.error('[ilo-context] hint failed:', err);
+    }
+
+    if (additions) {
+      return { systemPrompt: event.systemPrompt + additions };
     }
   });
 }
