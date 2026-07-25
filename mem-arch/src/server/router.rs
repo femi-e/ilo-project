@@ -3,8 +3,8 @@
 use axum::{Router, routing::{get, post, patch, delete}, Extension};
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::net::UnixListener;
 use tokio::signal;
+use std::net::SocketAddr;
 
 use mem_arch::store::Store;
 use super::AppState;
@@ -14,8 +14,8 @@ use super::crud;
 /// Uptime tracker — set when the server starts.
 pub static START_TIME: std::sync::LazyLock<Instant> = std::sync::LazyLock::new(Instant::now);
 
-/// Start the HTTP server and bind to the Unix socket.
-pub async fn run_server(store: mem_arch::ladybug::LadybugStore, socket_path: &str) {
+/// Start the HTTP server on the given TCP port (127.0.0.1 only).
+pub async fn run_server(store: mem_arch::ladybug::LadybugStore, port: u16) {
     // Build search index from node cache
     let search_idx = mem_arch::search::SearchIndex::build(
         &store.find_nodes_by_type(&mem_arch::types::NodeType::Entity).await.unwrap_or_default()
@@ -57,25 +57,18 @@ pub async fn run_server(store: mem_arch::ladybug::LadybugStore, socket_path: &st
         .route("/batch", post(crud::batch))
         .layer(Extension(state));
 
-    let listener = match UnixListener::bind(socket_path) {
-        Ok(l) => l,
-        Err(e) => {
-            tracing::error!("Failed to bind socket at {socket_path}: {e}");
-            return;
-        }
-    };
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    tracing::info!("Listening on {}", addr);
 
-    use std::os::unix::fs::PermissionsExt;
-    if let Err(e) = std::fs::set_permissions(socket_path,
-        std::fs::Permissions::from_mode(0o700)
-    ) {
-        tracing::error!("Failed to set socket permissions: {e}");
-        return;
-    }
-
-    if let Err(e) = axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
+    if let Err(e) = axum::serve(
+        tokio::net::TcpListener::bind(addr).await.unwrap_or_else(|e| {
+            tracing::error!("Failed to bind to {addr}: {e}");
+            std::process::exit(1);
+        }),
+        app,
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
     {
         tracing::error!("Server exited with error: {e}");
     }

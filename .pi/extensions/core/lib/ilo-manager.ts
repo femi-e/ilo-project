@@ -1,20 +1,21 @@
 // ============================================================================
-// lib/ilo-manager.ts — ILO process lifecycle management
+// lib/ilo-manager.ts — ILO + mistral.rs process lifecycle management
 // ============================================================================
-// Spawns the ILO Rust sidecar, monitors health, restarts on failure.
-// Designed to run as part of the pi extension's session_start.
+// Spawns the ILO Rust sidecar and the mistral.rs embedding server,
+// monitors health, restarts on failure.
 // ============================================================================
 
 import { spawn, ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { ilo } from './ilo-client';
-import { EXT_VAR_DIR } from './constants';
+import { EXT_VAR_DIR, MISTRAL_EMBED_PORT } from './constants';
 
 const STATE_KEY = '__ailo_ilo_manager__';
 
 interface IloManagerState {
-  process: ChildProcess | null;
+  iloProcess: ChildProcess | null;
+  embedProcess: ChildProcess | null;
   startedAt: number;
   restartCount: number;
 }
@@ -22,7 +23,7 @@ interface IloManagerState {
 function getState(): IloManagerState {
   let state = (globalThis as any)[STATE_KEY];
   if (!state) {
-    state = { process: null, startedAt: 0, restartCount: 0 };
+    state = { iloProcess: null, embedProcess: null, startedAt: 0, restartCount: 0 };
     (globalThis as any)[STATE_KEY] = state;
   }
   return state;
@@ -31,17 +32,28 @@ function getState(): IloManagerState {
 // ── Config ────────────────────────────────────────────
 
 const ILO_BINARY = process.env.ILO_BINARY || path.join(EXT_VAR_DIR, '..', 'mem-arch', 'target', 'release', 'ilo');
-const ILO_SOCKET = process.env.ILO_SOCKET || path.join(EXT_VAR_DIR, 'ilo.sock');
+const ILO_PORT = process.env.ILO_PORT || '18090';
 const ILO_DB_PATH = process.env.ILO_DB_PATH || path.join(EXT_VAR_DIR, 'ilo_data.lbug');
 const ILO_MAX_UPTIME = process.env.ILO_MAX_UPTIME || '45';
 const MAX_RESTARTS = 3;
 
+const MISTRALRS_BINARY = process.env.MISTRALRS_BINARY || path.join(EXT_VAR_DIR, '..', '..', '.mistralrs', 'mistralrs');
+
 // ── API ───────────────────────────────────────────────
 
-/** Start the ILO sidecar if not already running. */
+/** Start the ILO sidecar and the embedding server if not already running. */
 export async function startIlo(): Promise<boolean> {
   const state = getState();
+  let allOk = true;
 
+  // ── Start embedding server ──
+  const embedOk = await startEmbedServer();
+  if (!embedOk) {
+    console.warn('[ilo] Embedding server failed to start — vector search will be disabled');
+    allOk = false;
+  }
+
+  // ── Start ILO sidecar ──
   // Verify binary exists
   if (!fs.existsSync(ILO_BINARY)) {
     console.error(`[ilo] binary not found at ${ILO_BINARY}`);
@@ -49,13 +61,11 @@ export async function startIlo(): Promise<boolean> {
     return false;
   }
 
-  if (state.process) {
-    // Check if it's still alive
+  if (state.iloProcess) {
     try {
       const res = await ilo.status();
-      if (res.ok) return true;
+      if (res.ok) return allOk;
     } catch {}
-    // Dead process — clean up
     stopIlo();
   }
 
@@ -67,8 +77,9 @@ export async function startIlo(): Promise<boolean> {
     await new Promise((r) => setTimeout(r, 1000));
   } catch {}
 
-  // Remove stale socket
-  try { fs.unlinkSync(ILO_SOCKET); } catch {}
+  // Remove stale socket (if using UDS still)
+  const socketPath = path.join(EXT_VAR_DIR, 'ilo.sock');
+  try { fs.unlinkSync(socketPath); } catch {}
 
   // Ensure var/ directory exists
   const varDir = path.dirname(ILO_DB_PATH);
@@ -78,16 +89,16 @@ export async function startIlo(): Promise<boolean> {
   const proc = spawn(ILO_BINARY, [], {
     env: {
       ...process.env,
-      ILO_SOCKET,
+      ILO_PORT,
       ILO_DB_PATH,
-      ILO_MAX_UPTIME,
+      ILO_MAX_UPTIME: '0',      // No max uptime — managed by pi instead
       RUST_LOG: process.env.RUST_LOG || 'info',
     },
     cwd: path.dirname(ILO_BINARY),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
-  state.process = proc;
+  state.iloProcess = proc;
   state.startedAt = Date.now();
   console.error('[ilo] starting sidecar...');
 
@@ -99,9 +110,8 @@ export async function startIlo(): Promise<boolean> {
 
   proc.on('exit', (code) => {
     console.error(`[ilo] process exited with code ${code}`);
-    state.process = null;
+    state.iloProcess = null;
     try { fs.unlinkSync(pidFile); } catch {}
-    // Auto-restart if under limit
     if (state.restartCount < MAX_RESTARTS) {
       state.restartCount++;
       console.error(`[ilo] restarting (${state.restartCount}/${MAX_RESTARTS})...`);
@@ -116,7 +126,7 @@ export async function startIlo(): Promise<boolean> {
       const res = await ilo.status();
       if (res.ok) {
         console.error(`[ilo] started successfully (PID ${proc.pid})`);
-        return true;
+        return allOk;
       }
     } catch {}
   }
@@ -125,16 +135,82 @@ export async function startIlo(): Promise<boolean> {
   return false;
 }
 
-/** Stop the ILO sidecar gracefully. */
+/** Start the mistral.rs embedding server on port 1235. */
+async function startEmbedServer(): Promise<boolean> {
+  // Check if it's already running
+  try {
+    const res = await fetch(`http://127.0.0.1:${MISTRAL_EMBED_PORT}/`);
+    if (res.ok) {
+      console.error(`[embed] Server already running on :${MISTRAL_EMBED_PORT}`);
+      return true;
+    }
+  } catch {}
+
+  if (!fs.existsSync(MISTRALRS_BINARY)) {
+    console.error(`[embed] mistralrs binary not found at ${MISTRALRS_BINARY}`);
+    console.error('[embed] install: curl -fsSL https://raw.githubusercontent.com/EricLBuehler/mistral.rs/master/install.sh | sh');
+    return false;
+  }
+
+  const state = getState();
+
+  const proc = spawn(MISTRALRS_BINARY, [
+    'serve', 'embedding',
+    '--model-id', 'BAAI/bge-base-en-v1.5',
+    '--port', String(MISTRAL_EMBED_PORT),
+    '--no-ui',
+  ], {
+    env: { ...process.env },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  state.embedProcess = proc;
+  console.error(`[embed] starting mistralrs embedding server on :${MISTRAL_EMBED_PORT}...`);
+
+  proc.stdout?.on('data', (d) => process.stdout.write(`[embed] ${d}`));
+  proc.stderr?.on('data', (d) => process.stderr.write(`[embed] ${d}`));
+
+  proc.on('exit', (code) => {
+    console.error(`[embed] process exited with code ${code}`);
+    state.embedProcess = null;
+  });
+
+  // Wait for health check (up to 30s — first load downloads model)
+  for (let i = 0; i < 300; i++) {
+    await new Promise((r) => setTimeout(r, 100));
+    try {
+      const res = await fetch(`http://127.0.0.1:${MISTRAL_EMBED_PORT}/`);
+      if (res.ok) {
+        console.error(`[embed] started successfully`);
+        return true;
+      }
+    } catch {}
+  }
+
+  console.error(`[embed] failed to start within 30 seconds`);
+  return false;
+}
+
+/** Stop the ILO sidecar and embedding server gracefully. */
 export function stopIlo(): void {
   const state = getState();
-  if (state.process) {
-    state.process.kill('SIGTERM');
-    // Force kill after 5 seconds
+
+  // Stop embedding server
+  if (state.embedProcess) {
+    state.embedProcess.kill('SIGTERM');
     setTimeout(() => {
-      if (state.process) state.process.kill('SIGKILL');
+      if (state.embedProcess) state.embedProcess.kill('SIGKILL');
     }, 5000);
-    state.process = null;
+    state.embedProcess = null;
+  }
+
+  // Stop ILO
+  if (state.iloProcess) {
+    state.iloProcess.kill('SIGTERM');
+    setTimeout(() => {
+      if (state.iloProcess) state.iloProcess.kill('SIGKILL');
+    }, 5000);
+    state.iloProcess = null;
   }
 }
 
@@ -148,28 +224,33 @@ export async function isIloHealthy(): Promise<boolean> {
   }
 }
 
+/** Check if the embedding server is responding. */
+export async function isEmbedHealthy(): Promise<boolean> {
+  try {
+    const res = await fetch(`http://127.0.0.1:${MISTRAL_EMBED_PORT}/`);
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Ensure the ILO sidecar is running and responsive.
  * Call before any ILO API operation from event hooks.
- * Returns true if healthy, false if sidecar couldn't be started.
  */
 export async function ensureIlo(): Promise<boolean> {
   const state = getState();
 
-  // Fast path: already have a running process and it responds
-  if (state.process) {
+  if (state.iloProcess) {
     const healthy = await isIloHealthy();
     if (healthy) return true;
-    // Process is dead — clean up the stale reference
     console.error('[ilo] process died, restarting...');
-    state.process = null;
+    state.iloProcess = null;
   } else {
-    // No process reference — check if socket responds (e.g., started externally)
     const healthy = await isIloHealthy();
     if (healthy) return true;
   }
 
-  // Try to restart
   return startIlo();
 }
 

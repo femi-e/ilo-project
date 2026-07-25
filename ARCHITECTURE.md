@@ -15,102 +15,180 @@ ILO is a **persistent graph memory runtime** for coding agents. It runs as a Rus
 
 ---
 
-## System Diagram
+## Architecture Overview
+
+```
+                         ┌─────────────────────────────┐
+                         │     🧑 User (Terminal)      │
+                         └────────┬──────────┬─────────┘
+                                  │          │
+                       stdin/stdout│          │
+                                  │          │
+       ┌──────────────────────────┴──────────┴──────────────────────┐
+       │                                                             │
+       │  ┌──────── Active ─────────┐    ┌────── Passive ─────────┐ │
+       │  │                         │    │                         │ │
+       │  │   pi (coding agent)     │    │  ILO (memory runtime)  │ │
+       │  │   : stdio               │    │  :18090                 │ │
+       │  │                         │    │                         │ │
+       │  │  ┌───────────────────┐  │    │  ┌───────────────────┐  │ │
+       │  │  │ ILO Extension     │──┼────┼─▶│  /remember        │  │ │
+       │  │  │  (TypeScript)     │  │    │  │  /recall          │  │ │
+       │  │  │                   │◄─┼────┼──│  /learn           │  │ │
+       │  │  │  before_turn      │  │    │  │  /embed           │  │ │
+       │  │  │  → recall memory  │  │    │  │  /extract         │  │ │
+       │  │  │  → inject context │  │    │  │  /search          │  │ │
+       │  │  │                   │  │    │  └───────────────────┘  │ │
+       │  │  │  after_turn       │  │    │                         │ │
+       │  │  │  → extract        │  │    │  ┌───────────────────┐  │ │
+       │  │  │  → remember       │  │    │  │  LadybugDB        │  │ │
+       │  │  │  → learn          │  │    │  │  (graph store)    │  │ │
+       │  │  └───────────────────┘  │    │  └───────────────────┘  │ │
+       │  │                         │    │                         │ │
+       │  │  ┌───────────────────┐  │    └─────────────────────────┘ │
+       │  │  │ Web Search Tool  │  │                                 │
+       │  │  │  → SearXNG:18089 │  │                                 │
+       │  │  └───────────────────┘  │                                 │
+       │  └─────────────────────────┘                                 │
+       └──────────────────────────┬───────────────────────────────────┘
+                                  │
+                    ┌─────────────┴─────────────┐
+                    │     HTTP localhost:*      │
+                    │  (all 127.0.0.1 only)     │
+                    └─────────────┬─────────────┘
+                                  │
+                                  ▼
+       ┌──────────────────────────────────────────────────────────────┐
+       │                    ◈  Infrastructure  ◈                     │
+       │                                                              │
+       │  ┌──────────────────────────────────────────────────────┐   │
+       │  │  mistral.rs  :1234                                  │   │
+       │  │  ───────────────────────                            │   │
+       │  │  POST /v1/chat/completions → LLM (Qwen3.5-9B)      │   │
+       │  │  POST /v1/embeddings       → embeddings             │   │
+       │  │  POST /v1/messages         → Anthropic-compat       │   │
+       │  │                                                      │   │
+       │  │  pi → /v1/chat (local chat)                         │   │
+       │  │  ILO → /v1/embeddings (via /embed proxy)            │   │
+       │  └──────────────────────────────────────────────────────┘   │
+       │                                                              │
+       │  ┌──────────────────────────────────────────────────────┐   │
+       │  │  SearXNG  :18089  (podman/gvproxy)                  │   │
+       │  │  ───────────────────────                            │   │
+       │  │  pi → /search?q=... (web search tool)               │   │
+       │  └──────────────────────────────────────────────────────┘   │
+       │                                                              │
+       │  ┌──────────────────────────────────────────────────────┐   │
+       │  │  Cloud APIs                                          │   │
+       │  │  ───────────────────────                            │   │
+       │  │  api.anthropic.com → fallback LLM                   │   │
+       │  │  api.openai.com   → fallback LLM                    │   │
+       │  └──────────────────────────────────────────────────────┘   │
+       └──────────────────────────────────────────────────────────────┘
+```
+
+## Interaction Protocols
+
+| Between | Transport | Port | Purpose |
+|---------|-----------|------|---------|
+| User ↔ pi | stdin/stdout | — | Terminal I/O |
+| pi → ILO | TCP HTTP | `:18090` | Store/retrieve memory |
+| pi → mistral.rs | TCP HTTP | `:1234` | Local LLM chat |
+| ILO → mistral.rs | TCP HTTP | `:1234` | Embeddings for recall |
+| pi → SearXNG | TCP HTTP | `:18089` | Web search tool |
+| pi → Cloud | TCP HTTPS | 443 | Fallback LLM |
+
+All local services bound to `127.0.0.1` only — no external access.
+
+## Data Flow Per Turn
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│                        pi Coding Agent                               │
+│                        ONE CONVERSATION TURN                         │
 │                                                                      │
-│  ┌──────────────────────────────────────────────────────────────┐   │
-│  │              ILO Extension (.pi/extensions/core/)             │   │
-│  │                                                               │   │
-│  │  ┌─────────────┐  ┌──────────────┐  ┌────────────────────┐  │   │
-│  │  │ context.ts   │  │  turn.ts     │  │  input.ts          │  │   │
-│  │  │ (before_     │  │  (turn_end)  │  │  (user_input)      │  │   │
-│  │  │  agent_start)│  │              │  │                    │  │   │
-│  │  │ 1. extract   │  │ 1. extract   │  │ stores lastUserText │  │   │
-│  │  │ 2. embed     │  │ 2. learn     │  │                    │  │   │
-│  │  │ 3. recall    │  │ 3. remember  │  │                    │  │   │
-│  │  │ 4. inject    │  │              │  │                    │  │   │
-│  │  └──────┬───────┘  └──────┬───────┘  └────────────────────┘  │   │
-│  │         │                 │                                    │   │
-│  │         ▼                 ▼                                    │   │
-│  │  ┌────────────────────────────────────────────────────────┐   │   │
-│  │  │            ilo-client.ts (UDS HTTP client)              │   │   │
-│  │  │    Communicates with Rust sidecar via Unix socket       │   │   │
-│  │  └───────────────────────┬────────────────────────────────┘   │   │
-│  │                          │                                     │   │
-│  │  ┌────────────────────────────────────────────────────────┐   │   │
-│  │  │            ilo-manager.ts (Process lifecycle)           │   │   │
-│  │  │    Spawn/kill/restart the Rust binary, health checks    │   │   │
-│  │  └────────────────────────────────────────────────────────┘   │   │
-│  │                          │                                     │   │
-│  │  ┌────────────────────────────────────────────────────────┐   │   │
-│  │  │            ilo-tools.ts (LLM-invokable tools)           │   │   │
-│  │  │    search, store, ingest, connect, forget,              │   │   │
-│  │  │    project_tree, git_snapshot, git_commit               │   │   │
-│  │  └────────────────────────────────────────────────────────┘   │   │
-│  └──────────────────────────────────────────────────────────────┘   │
-│                          │                                          │
-└──────────────────────────┼──────────────────────────────────────────┘
-                           │ UDS (Unix Domain Socket)
-                           ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│                   ILO Rust Sidecar (mem-arch/)                       │
+│  BEFORE AGENT START:                                                 │
 │                                                                      │
-│  ┌──────────────────────────────────────────────────────────────┐   │
-│  │              Axum HTTP Server (12 endpoints)                   │   │
-│  │                                                                │   │
-│  │  GET  /status       → Health check                            │   │
-│  │  POST /remember     → Store turn + entities + claims          │   │
-│  │  POST /recall       → Retrieve context (FTS+vector+PPR)       │   │
-│  │  POST /learn        → Signal learning feedback                 │   │
-│  │  POST /extract      → Extract entities/claims from text       │   │
-│  │  POST /embed        → Embed text with BGE (768-dim)           │   │
-│  │  POST /ingest       → Ingest external content (no turn)       │   │
-│  │  POST /search       → Search with filters                     │   │
-│  │  POST /entity/lookup→ Lookup entity by name                   │   │
-│  │  POST /connect      → Create a link between entities          │   │
-│  │  POST /entity/update→ Update entity properties                │   │
-│  │  GET  /debug        → Internal tag index state                │   │
-│  └──────────────────────┬───────────────────────────────────────┘   │
-│                         │                                           │
-│  ┌──────────────────────▼───────────────────────────────────────┐   │
-│  │                 Core Modules                                  │   │
-│  │                                                                │   │
-│  │  ┌────────────┐  ┌──────────────┐  ┌──────────────────────┐   │   │
-│  │  │ types.rs   │  │  store.rs    │  │  ladybug.rs          │   │   │
-│  │  │ Node/Edge/ │  │  Store trait │  │  LadybugDB adapter   │   │   │
-│  │  │ Prop model │  │  (async)     │  │  + in-memory caches  │   │   │
-│  │  └────────────┘  └──────────────┘  └──────────────────────┘   │   │
-│  │                                                                │   │
-│  │  ┌────────────────┐  ┌──────────────┐  ┌──────────────────┐   │   │
-│  │  │ retrieval.rs   │  │  search.rs   │  │  embed.rs        │   │   │
-│  │  │ 3-factor PPR   │  │  FTS (BM25)  │  │  BGE via Candle  │   │   │
-│  │  │ seed chain +   │  │  + vector    │  │  768-dim, CPU    │   │   │
-│  │  │ graph expansion│  │  store       │  │  lazy-loaded     │   │   │
-│  │  └────────────────┘  └──────────────┘  └──────────────────┘   │   │
-│  │                                                                │   │
-│  │  ┌────────────────┐  ┌──────────────┐  ┌──────────────────┐   │   │
-│  │  │ learning.rs    │  │  extract.rs  │  │  config.rs       │   │   │
-│  │  │ freq×recency   │  │  heuristic   │  │  RetrievalConfig │   │   │
-│  │  │ weight formula │  │  entity/claim│  │  + LearningConfig│   │   │
-│  │  │ real-time decay│  │  extraction  │  │                  │   │   │
-│  │  └────────────────┘  └──────────────┘  └──────────────────┘   │   │
-│  └──────────────────────────────────────────────────────────────┘   │
-│                         │                                           │
-│  ┌──────────────────────▼───────────────────────────────────────┐   │
-│  │                    Data Layer                                  │   │
-│  │                                                                │   │
-│  │  ┌────────────────────────────────────────────────────────┐   │   │
-│  │  │   LadybugDB (embedded, file-based)                      │   │   │
-│  │  │   • Node table (Node, Prop, LINK rel)                   │   │   │
-│  │  │   • Cypher query language                               │   │   │
-│  │  │   • File: var/ilo_data.lbug + .wal                      │   │   │
-│  │  │   • In-memory caches: node_cache, link_cache, tag_index │   │   │
-│  │  └────────────────────────────────────────────────────────┘   │   │
-│  └──────────────────────────────────────────────────────────────┘   │
+│  1. pi fires before_agent_start hook                                 │
+│     └── ILO Extension calls ILO /recall(query)                       │
+│           └── ILO needs embeddings → calls mistral.rs /v1/embeddings │
+│           └── ILO runs FTS + PPR graph traversal                     │
+│           └── Returns context block to pi                            │
+│     └── pi injects context into system prompt                        │
+│                                                                      │
+│  AGENT RUNS (LLM generates response, may call tools)                 │
+│                                                                      │
+│  AFTER TURN END:                                                     │
+│                                                                      │
+│  2. pi fires turn_end hook                                           │
+│     └── ILO Extension calls ILO /extract(query+response)             │
+│           └── ILO runs heuristic entity/claim extraction             │
+│     └── ILO Extension calls ILO /remember(turn+entities)             │
+│           └── ILO needs embeddings → calls mistral.rs /v1/embeddings │
+│           └── ILO stores turn + entities + claims + links in DB      │
+│     └── ILO Extension calls ILO /learn(feedback)                     │
+│           └── ILO runs Hebbian weight update                         │
+│                                                                      │
+│  BETWEEN TURNS (optional, every 50 turns):                           │
+│                                                                      │
+│  3. ILO runs consolidation                                           │
+│     └── Scans for hub nodes (total incident weight > 5.0)            │
+│     └── No-op for small graphs                                       │
 └──────────────────────────────────────────────────────────────────────┘
+```
+
+## API Contracts
+
+### pi → ILO (`:18090`)
+
+```
+POST /recall
+  Request:  { "query": "what is Ailo?", "query_embedding": [0.1,...]? }
+  Response: { "context": "@session [query:...]\n  [nodes: 3]\n...",
+              "nodes": 3, "chars": 412 }
+
+POST /remember
+  Request:  { "query": "...", "response": "...",
+              "entities": [{ "label": "Ailo", ... }],
+              "claims": [{ "content": "Ailo is a memory runtime", ... }] }
+  Response: { "status": "ok", "turn_id": "t_...", "entities_created": 2 }
+
+POST /learn
+  Request:  { "turn_id": "t_...", "query": "...",
+              "used_labels": ["Ailo"], "retrieved_labels": ["Ailo", ...],
+              "quality": 0.8 }
+  Response: { "status": "ok", "edges_updated": 5 }
+
+POST /embed
+  Request:  { "text": "Ailo is a memory runtime", "is_query": true }
+  Response: { "embedding": [0.021, -0.043, ...], "dim": 768 }
+```
+
+### ILO → mistral.rs (`:1234`)
+
+```
+POST /v1/embeddings
+  Request:  { "model": "default", "input": "Ailo is a memory runtime" }
+  Response: { "data": [{ "embedding": [0.021, -0.043, ...], "index": 0 }],
+              "model": "default", "usage": { "prompt_tokens": 6 } }
+```
+
+### pi → mistral.rs (`:1234`)
+
+```
+POST /v1/chat/completions
+  Request:  { "model": "default",
+              "messages": [{ "role": "user", "content": "..." }],
+              "stream": true }
+  Response: SSE stream of { "choices": [{ "delta": { "content": "..." } }] }
+```
+
+## Port Map
+
+| Port | Service | Bound To | Purpose |
+|------|---------|----------|---------|
+| `1234` | mistral.rs | `127.0.0.1` | LLM + embeddings |
+| `18089` | SearXNG | `*` (gvproxy) | Web search |
+| `18090` | ILO | `127.0.0.1` | Memory runtime |
 ```
 
 ---

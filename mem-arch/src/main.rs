@@ -43,15 +43,18 @@ async fn main() {
 
     println!("ILO Memory Architecture — starting...");
 
-    // Read config from env vars, with defaults in ./var/
-    let socket_path = std::env::var("ILO_SOCKET").unwrap_or_else(|_| "./var/ilo.sock".into());
+    // Read config from env vars, with defaults
+    let port: u16 = std::env::var("ILO_PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(18090);
     let db_path = std::env::var("ILO_DB_PATH").unwrap_or_else(|_| "./var/ilo_data.lbug".into());
     let max_uptime_mins: u64 = std::env::var("ILO_MAX_UPTIME")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
 
-    println!("  socket: {socket_path}");
+    println!("  port:   {port}");
     println!("  db:     {db_path}");
     if max_uptime_mins > 0 {
         println!("  max uptime: {} minutes", max_uptime_mins);
@@ -126,10 +129,9 @@ async fn main() {
         }
     };
 
-    // Remove stale socket from a previous run
-    let _ = std::fs::remove_file(&socket_path);
+    // No stale socket to clean — using TCP port
 
-    // Try to warm the embedding model (non-fatal if offline)
+    // Check embedding server availability (non-fatal if offline)
     mem_arch::embed::warmup();
 
     // Warm cache (fast for small DBs, runs before server)
@@ -138,19 +140,17 @@ async fn main() {
     // Start the HTTP server with optional uptime timer
     if max_uptime_mins > 0 {
         let duration = std::time::Duration::from_secs(max_uptime_mins * 60);
-        let socket_path = socket_path.clone();
         tokio::select! {
-            _ = run_server(store, &socket_path) => {}
+            _ = run_server(store, port) => {}
             _ = tokio::time::sleep(duration) => {
                 tracing::info!("Max uptime of {} minutes reached, shutting down", max_uptime_mins);
             }
         }
     } else {
-        run_server(store, &socket_path).await;
+        run_server(store, port).await;
     }
 
-    // Cleanup socket and PID file on exit
-    let _ = std::fs::remove_file(&socket_path);
+    // Cleanup PID file on exit
     remove_pid_file(&pid_path);
     tracing::info!("ILO shutdown complete");
 }
