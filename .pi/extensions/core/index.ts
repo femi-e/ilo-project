@@ -14,9 +14,10 @@ import { registerTurnHooks } from './events/turn';
 import { registerInputHooks } from './events/input';
 import { startIlo, stopIlo, keepChatAlive, setRegisteredProviders, setUnregisterProviderCallback } from './lib/ilo-manager';
 import { registerIloTools } from './lib/ilo-tools';
-import { registerWebSearchTool } from './tools/web-search';
-import { registerWebScrapeTool } from './tools/web-scrape';
-import { registerWebCrawlTool } from './tools/web-crawl';
+// Web tools disabled — pi-web-access provides better versions
+// import { registerWebSearchTool } from './tools/web-search';
+// import { registerWebScrapeTool } from './tools/web-scrape';
+// import { registerWebCrawlTool } from './tools/web-crawl';
 import { registerTaskTool } from './tools/task';
 import { registerDiagnosticsTool } from './tools/diagnostics';
 import { LOCAL_CHAT_PORT_START, LOCAL_CHAT_PORT_END, LOCAL_EMBED_PORT } from './lib/constants';
@@ -29,9 +30,10 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
   // ── Register LLM tools ────────────────────────────
   registerIloTools(pi);
-  registerWebSearchTool(pi);
-  registerWebScrapeTool(pi);
-  registerWebCrawlTool(pi);
+  // Web tools disabled — pi-web-access provides better versions
+  // registerWebSearchTool(pi);
+  // registerWebScrapeTool(pi);
+  // registerWebCrawlTool(pi);
   registerTaskTool(pi);
   registerDiagnosticsTool(pi);
 
