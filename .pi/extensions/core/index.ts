@@ -152,11 +152,11 @@ async function registerMistralProvider(pi: ExtensionAPI): Promise<{ embed: strin
       models: serverModels.map((m) => ({
         id: m.id,
         name: m.name,
-        reasoning: false,
+        reasoning: true,
         input: ['text'],
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         contextWindow: 262144,
-        maxTokens: 8192,
+        maxTokens: 32768,
       })),
     });
 
