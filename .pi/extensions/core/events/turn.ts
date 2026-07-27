@@ -83,7 +83,7 @@ export function registerTurnHooks(pi: ExtensionAPI): void {
 		}
 
 		try {
-			// Store the turn for conversation history (no entity extraction — 4B model handles that)
+			// Store the turn for conversation history
 			await ilo
 				.remember({
 					query: userText,
@@ -93,6 +93,25 @@ export function registerTurnHooks(pi: ExtensionAPI): void {
 					turnIndex: state.turnCount++,
 				})
 				.catch(() => {});
+
+			// Learning signal: check which 4B-extracted entities appear in the response
+			const extractedLabels: string[] =
+				(globalThis as any).__lastExtractedLabels || [];
+			if (extractedLabels.length > 0) {
+				const usedLabels = extractedLabels.filter((name: string) =>
+					responseText.toLowerCase().includes(name.toLowerCase()),
+				);
+				if (usedLabels.length > 0) {
+					await ilo
+						.learn({
+							query: userText,
+							responseText,
+							usedLabels,
+							quality: 0.8,
+						})
+						.catch(() => {});
+				}
+			}
 
 			// Notify on first turn
 			if (state.turnCount <= 2 && ctx?.ui) {

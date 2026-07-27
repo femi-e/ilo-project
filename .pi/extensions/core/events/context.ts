@@ -178,6 +178,11 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 						(result.extracted_entities.length > 0 ||
 							result.extracted_claims.length > 0)
 					) {
+						// Store entity labels for turn_end learning signal
+						(globalThis as any).__lastExtractedLabels = result.extracted_entities.map(
+							(e: any) => e.name,
+						);
+
 						await ilo
 							.remember({
 								query: latestQuery,

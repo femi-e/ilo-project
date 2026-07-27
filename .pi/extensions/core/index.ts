@@ -25,7 +25,7 @@ import { registerIloTools } from "./lib/ilo-tools";
 // import { registerWebScrapeTool } from './tools/web-scrape';
 // import { registerWebCrawlTool } from './tools/web-crawl';
 import { registerTaskTool } from "./tools/task";
-// context_rebuild tool removed — 4B model runs automatically via before_provider_request hook
+
 import { registerDiagnosticsTool } from "./tools/diagnostics";
 import {
 	LOCAL_CHAT_PORT_START,
