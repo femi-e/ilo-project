@@ -10,7 +10,6 @@
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { ilo } from '../lib/ilo-client';
 import { ensureIlo } from '../lib/ilo-manager';
-import { setPhase } from './context';
 
 // ── In-memory state (survives /reload) ────────────────
 
@@ -57,10 +56,7 @@ export function registerTurnHooks(pi: ExtensionAPI): void {
     }
   });
 
-  // Reset phase to 'gated' after each turn completes, so next request triggers context_rebuild
   pi.on('turn_end', async (event: any, ctx: any) => {
-    setPhase('gated');
-
     const state = getState();
     const userText = state.lastUserText;
     const msg = event?.message;

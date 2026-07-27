@@ -83,6 +83,12 @@ impl LadybugStore {
         c.query("CREATE NODE TABLE IF NOT EXISTS Node (id STRING PRIMARY KEY, type STRING, tags STRING[], label STRING, embedding FLOAT[768], confidence DOUBLE DEFAULT 0.0, created_at TIMESTAMP DEFAULT current_timestamp(), updated_at TIMESTAMP DEFAULT current_timestamp())")?;
         c.query("CREATE NODE TABLE IF NOT EXISTS Prop (id STRING PRIMARY KEY, owner_id STRING, owner_kind STRING, key STRING, kind STRING, val_str STRING, val_float DOUBLE, val_int INT64, val_bool BOOLEAN, val_json JSON, created_at TIMESTAMP DEFAULT current_timestamp(), updated_at TIMESTAMP DEFAULT current_timestamp())")?;
         c.query("CREATE REL TABLE IF NOT EXISTS LINK (FROM Node TO Node, id STRING PRIMARY KEY, type STRING, rel STRING DEFAULT '', tags STRING[], weight DOUBLE DEFAULT 0.0, confidence DOUBLE DEFAULT 0.0, created_at TIMESTAMP DEFAULT current_timestamp())")?;
+        // Migrations: add columns to LINK table for old databases created before schema updates
+        let _ = c.query("ALTER TABLE LINK ADD IF NOT EXISTS rel STRING DEFAULT ''");
+        let _ = c.query("ALTER TABLE LINK ADD IF NOT EXISTS tags STRING[] DEFAULT []");
+        let _ = c.query("ALTER TABLE LINK ADD IF NOT EXISTS confidence DOUBLE DEFAULT 0.0");
+
+
         for i in &["idx_node_type","idx_prop_owner","idx_prop_owner_key","idx_link_type","idx_link_from","idx_link_to"] {
             let t = if i.starts_with("idx_node"){"Node"}else if i.starts_with("idx_prop"){"Prop"}else{"LINK"};
             let col = match *i{"idx_node_type"=>"type","idx_prop_owner"=>"owner_id","idx_prop_owner_key"=>"owner_id,key","idx_link_type"=>"type","idx_link_from"=>"from","idx_link_to"=>"to",_=>""};
@@ -165,7 +171,14 @@ impl LadybugStore {
                 nc.insert(node.id.clone(), node);
             } }
         }
-        let mut link_q = c.query("MATCH (a:Node)-[l:LINK]->(b:Node) RETURN l.id, a.id, b.id, l.type, l.rel, l.weight, l.confidence, l.created_at")?;
+        let mut link_q = match c.query("MATCH (a:Node)-[l:LINK]->(b:Node) RETURN l.id, a.id, b.id, l.type, l.rel, l.weight, l.confidence, l.created_at") {
+            Ok(q) => q,
+            Err(e) if e.to_string().contains("Cannot find property rel") => {
+                // Old schema without `rel` column — query without it
+                c.query("MATCH (a:Node)-[l:LINK]->(b:Node) RETURN l.id, a.id, b.id, l.type, l.weight, l.confidence, l.created_at")?
+            },
+            Err(e) => return Err(StoreError::Database(e.to_string())),
+        };
         {
             let mut lc = match self.link_cache.lock() {
                 Ok(guard) => guard,
@@ -245,7 +258,8 @@ fn apply(c: &Connection, m: &StoreMutation) -> Result<(), StoreError> {
             ])?;
         }
         StoreMutation::CreateLink { id, from, to, type_, rel, tags, weight, confidence } => {
-            exec_params(c, "MATCH (a:Node {id: $from}), (b:Node {id: $to}) CREATE (a)-[:LINK {id: $lid, type: $type, rel: $rel, tags: $tags, weight: $weight, confidence: $confidence}]->(b)", vec![
+            // Try with `rel` column (new schema), fall back to old schema if column missing
+            let result = exec_params(c, "MATCH (a:Node {id: $from}), (b:Node {id: $to}) CREATE (a)-[:LINK {id: $lid, type: $type, rel: $rel, tags: $tags, weight: $weight, confidence: $confidence}]->(b)", vec![
                 ("from", Value::String(from.clone())),
                 ("to", Value::String(to.clone())),
                 ("lid", Value::String(id.clone())),
@@ -254,7 +268,23 @@ fn apply(c: &Connection, m: &StoreMutation) -> Result<(), StoreError> {
                 ("tags", tags_to_value(tags)),
                 ("weight", Value::Double(*weight)),
                 ("confidence", Value::Double(*confidence)),
-            ])?;
+            ]);
+            match result {
+                Ok(()) => {},
+                Err(e) if e.to_string().contains("Cannot find property rel") => {
+                    // Old schema without `rel` column — create without it
+                    exec_params(c, "MATCH (a:Node {id: $from}), (b:Node {id: $to}) CREATE (a)-[:LINK {id: $lid, type: $type, tags: $tags, weight: $weight, confidence: $confidence}]->(b)", vec![
+                        ("from", Value::String(from.clone())),
+                        ("to", Value::String(to.clone())),
+                        ("lid", Value::String(id.clone())),
+                        ("type", Value::String(type_.as_str().into())),
+                        ("tags", tags_to_value(tags)),
+                        ("weight", Value::Double(*weight)),
+                        ("confidence", Value::Double(*confidence)),
+                    ])?;
+                },
+                Err(e) => return Err(e),
+            }
         }
         StoreMutation::UpdateLinkWeight { id, weight } => {
             exec_params(c, "MATCH ()-[l:LINK {id: $id}]->() SET l.weight = $weight", vec![
@@ -317,10 +347,18 @@ fn row_to_node(row: &[Value]) -> Option<NodeRecord> {
 fn row_to_link(row: &[Value]) -> Option<LinkRecord> {
     if row.len()<7{return None;}
     if let Value::String(id)=&row[0]{if let Value::String(frm)=&row[1]{if let Value::String(to)=&row[2]{if let Value::String(typ)=&row[3]{
-        let rel=match &row[4]{Value::String(s)=>s.clone(),_=>String::new()};
-        let w=match &row[5]{Value::Double(d)=>*d,_=>0.0};
-        let conf=match &row[6]{Value::Double(d)=>*d,_=>0.0};
-        let created_at = ts_from_value(&row[7]);
+        // 8 columns = new schema (has `rel`), 7 columns = old schema (no `rel`)
+        let (rel, w, conf, created_at) = if row.len() >= 8 {
+            (match &row[4]{Value::String(s)=>s.clone(),_=>String::new()},
+             match &row[5]{Value::Double(d)=>*d,_=>0.0},
+             match &row[6]{Value::Double(d)=>*d,_=>0.0},
+             ts_from_value(&row[7]))
+        } else {
+            (String::new(),
+             match &row[4]{Value::Double(d)=>*d,_=>0.0},
+             match &row[5]{Value::Double(d)=>*d,_=>0.0},
+             ts_from_value(&row[6]))
+        };
         Some(LinkRecord{id:id.clone(),from:frm.clone(),to:to.clone(),type_:typ.parse::<LinkType>().unwrap_or(LinkType::Depends),rel,tags:vec![],weight:w,confidence:conf,created_at})
     }else{None}}else{None}}else{None}}else{None}
 }

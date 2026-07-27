@@ -6,7 +6,7 @@
 // if the user hasn't selected a local model in pi.
 // ============================================================================
 
-import { spawn, ChildProcess } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -19,6 +19,7 @@ interface IloManagerState {
   iloProcess: ChildProcess | null;
   embedProcess: ChildProcess | null;
   chatProcess: ChildProcess | null;
+  _4bProcess: ChildProcess | null;
   startedAt: number;
   restartCount: number;
   chatIdleTimer: ReturnType<typeof setTimeout> | null;
@@ -31,7 +32,7 @@ interface IloManagerState {
 function getState(): IloManagerState {
   let state = (globalThis as any)[STATE_KEY];
   if (!state) {
-    state = { iloProcess: null, embedProcess: null, chatProcess: null, startedAt: 0, restartCount: 0, chatIdleTimer: null, registeredProviders: { embed: [], chat: [] }, unregisterProvider: null };
+    state = { iloProcess: null, embedProcess: null, chatProcess: null, _4bProcess: null, startedAt: 0, restartCount: 0, chatIdleTimer: null, registeredProviders: { embed: [], chat: [] }, unregisterProvider: null };
     (globalThis as any)[STATE_KEY] = state;
   }
   return state;
@@ -53,6 +54,12 @@ const CHAT_MODEL_PATH = process.env.LLAMA_CHAT_MODEL || '';
 
 /** How long to wait (ms) before stopping the chat server if the local model isn't selected. */
 const CHAT_IDLE_TIMEOUT = parseInt(process.env.LOCAL_CHAT_IDLE_TIMEOUT || '300000', 10); // 5 min default
+
+/** 4B model for context rebuild — GGUF path and port. Set env ILO_4B_MODEL_PATH or LLAMA_4B_MODEL to override. */
+const _4B_MODEL_PATH = process.env.ILO_4B_MODEL_PATH || process.env.LLAMA_4B_MODEL || path.join(os.homedir(), 'models', 'qwen3.5-35b-a3b', 'Qwen3.5-4B-Q4_K_M.gguf');
+
+/** 4B model server port (one past chat start = 1236). */
+const _4B_PORT = parseInt(process.env.ILO_4B_PORT || String(LOCAL_CHAT_PORT_START + 2), 10);
 
 // ── Provider registration tracking ───────────────────
 
@@ -109,6 +116,13 @@ export async function startIlo(): Promise<boolean> {
   } else {
     console.warn('[ilo] No chat model configured — set LLAMA_CHAT_MODEL to auto-start a local LLM');
     console.warn('[ilo] Example: LLAMA_CHAT_MODEL=~/models/qwen3.5-9b.gguf pi');
+  }
+
+  // ── Start 4B context-rebuild model server ──
+  const _4bOk = await start4BModelServer();
+  if (!_4bOk) {
+    console.warn('[ilo] 4B context-rebuild model unavailable — set ILO_4B_MODEL_PATH or LLAMA_4B_MODEL');
+    console.warn('[ilo] Example: ILO_4B_MODEL_PATH=~/models/qwen3.5-35b-a3b/Qwen3.5-4B-Q4_K_M.gguf');
   }
 
   // ── Start ILO sidecar ──
@@ -345,6 +359,77 @@ function stopChatServer(): void {
   }
 }
 
+/** Start the 4B context-rebuild model server on the 4B port (default 1236). */
+async function start4BModelServer(): Promise<boolean> {
+  const port = _4B_PORT;
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/`);
+    if (res.ok) {
+      console.error(`[4b] Server already running on :${port}`);
+      return true;
+    }
+  } catch {
+    // Not running — will start
+  }
+
+  if (!fs.existsSync(_4B_MODEL_PATH)) {
+    console.error(`[4b] Model not found at ${_4B_MODEL_PATH}`);
+    return false;
+  }
+
+  const state = getState();
+
+  const proc = spawn(LLAMA_SERVER_BINARY, [
+    '--port', String(port),
+    '--host', '127.0.0.1',
+    '--model', _4B_MODEL_PATH,
+    '--ctx-size', '16384',
+    '--n-gpu-layers', '99',
+  ], {
+    env: { ...process.env },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  state._4bProcess = proc;
+  console.error(`[4b] starting llama-server (${_4B_MODEL_PATH}) on :${port}...`);
+
+  proc.stdout?.on('data', (d) => process.stdout.write(`[4b] ${d}`));
+  proc.stderr?.on('data', (d) => process.stderr.write(`[4b] ${d}`));
+
+  proc.on('exit', (code) => {
+    console.error(`[4b] process exited with code ${code}`);
+    state._4bProcess = null;
+  });
+
+  for (let i = 0; i < 50; i++) {
+    await new Promise((r) => setTimeout(r, 100));
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/`);
+      if (res.ok) {
+        console.error(`[4b] started successfully on :${port}`);
+        return true;
+      }
+    } catch {
+      // Still starting
+    }
+  }
+
+  console.error(`[4b] failed to start within 5 seconds`);
+  return false;
+}
+
+/** Stop the 4B context-rebuild model server and unregister its providers from pi. */
+function stop4BModelServer(): void {
+  const state = getState();
+  if (state._4bProcess) {
+    state._4bProcess.kill('SIGTERM');
+    setTimeout(() => {
+      if (state._4bProcess) state._4bProcess.kill('SIGKILL');
+    }, 5000);
+    state._4bProcess = null;
+  }
+}
+
 /** Stop the embedding server and unregister its providers from pi. */
 function stopEmbedServer(): void {
   const state = getState();
@@ -362,6 +447,7 @@ function stopEmbedServer(): void {
 export function stopIlo(): void {
   const state = getState();
 
+  stop4BModelServer();
   stopChatServer();
   stopEmbedServer();
 
