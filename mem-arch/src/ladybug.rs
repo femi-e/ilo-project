@@ -1,7 +1,6 @@
 //! LadybugStore — per-operation connection pool pattern.
 use crate::store::Store;
 use crate::types::*;
-use async_trait::async_trait;
 use lbug::{Connection, Database, LogicalType, SystemConfig, Value};
 use std::collections::HashMap;
 use std::path::Path;
@@ -413,7 +412,6 @@ impl Drop for LadybugStore {
     }
 }
 
-#[async_trait]
 impl Store for LadybugStore {
     async fn write_batch(&mut self, batch: WriteBatch) -> Result<(), StoreError> {
         let c = Connection::new(self.db.as_ref())?;

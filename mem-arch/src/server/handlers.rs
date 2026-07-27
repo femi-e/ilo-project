@@ -41,12 +41,12 @@ pub async fn remember(
     // Embed new entities
     let entity_embeddings: Vec<Vec<f32>> = if !created_entities.is_empty() {
         if let Some(ref entities) = req.entities {
-            let labels: Vec<String> = entities.iter().map(|e| e.label.clone()).collect();
             let count = created_entities.len();
-            let result: Vec<Option<Vec<f32>>> = tokio::task::spawn_blocking(move || {
-                labels.iter().map(|l| mem_arch::embed::embed(l, false)).collect::<Vec<_>>()
-            }).await.unwrap_or_default();
-            let successful: Vec<Vec<f32>> = result.into_iter().flatten().collect();
+            let mut results = Vec::new();
+            for e in entities {
+                results.push(mem_arch::embed::embed(&e.label, false).await);
+            }
+            let successful: Vec<Vec<f32>> = results.into_iter().flatten().collect();
             tracing::info!("Generated embeddings for {}/{} entities", successful.len(), count);
             successful
         } else { vec![] }
@@ -379,9 +379,7 @@ pub async fn extract(
 
 pub async fn embed(Json(req): Json<EmbedReq>) -> Json<serde_json::Value> {
     let is_query = req.is_query.unwrap_or(true);
-    let result: Option<Vec<f32>> = tokio::task::spawn_blocking(move || {
-        mem_arch::embed::embed(&req.text, is_query)
-    }).await.unwrap_or(None);
+    let result = mem_arch::embed::embed(&req.text, is_query).await;
     match result {
         Some(emb) => {
             let dim = emb.len();

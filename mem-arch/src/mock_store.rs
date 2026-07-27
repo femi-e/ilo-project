@@ -3,7 +3,6 @@
 
 use crate::store::Store;
 use crate::types::*;
-use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -46,7 +45,6 @@ impl MockStore {
     }
 }
 
-#[async_trait]
 impl Store for MockStore {
     async fn write_batch(&mut self, _batch: WriteBatch) -> Result<(), StoreError> { Ok(()) }
     async fn write_maintenance(&mut self, _m: Vec<StoreMutation>) -> Result<(), StoreError> { Ok(()) }

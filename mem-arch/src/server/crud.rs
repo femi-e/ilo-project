@@ -55,15 +55,15 @@ pub async fn create_entities(
 
     // Generate embeddings for newly created entities
     if !created.is_empty() {
-        let labels: Vec<String> = req.entities.iter().map(|e| e.label.clone()).collect();
-        let embeddings: Vec<Option<Vec<f32>>> = tokio::task::spawn_blocking(move || {
-            labels.iter().map(|l| mem_arch::embed::embed(l, false)).collect()
-        }).await.unwrap_or_default();
+        let mut embeddings: Vec<Option<Vec<f32>>> = Vec::new();
+        for e in &req.entities {
+            embeddings.push(mem_arch::embed::embed(&e.label, false).await);
+        }
 
         let store = state.store.read().await;
         for (i, eid) in created.iter().enumerate() {
             if i < embeddings.len() {
-                if let Some(emb) = &embeddings[i] {
+                if let Some(ref emb) = embeddings[i] {
                     if !emb.is_empty() && emb.iter().any(|x| *x != 0.0) {
                         let emb_str: String = emb.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(", ");
                         let _ = store.raw_query(&format!(
@@ -706,15 +706,15 @@ pub async fn batch(
     // Generate embeddings for newly created entities
     if !entities_created.is_empty() {
         if let Some(entities) = &req.entities {
-            let labels: Vec<String> = entities.iter().map(|e| e.label.clone()).collect();
-            let embeddings: Vec<Option<Vec<f32>>> = tokio::task::spawn_blocking(move || {
-                labels.iter().map(|l| mem_arch::embed::embed(l, false)).collect()
-            }).await.unwrap_or_default();
+            let mut embeddings: Vec<Option<Vec<f32>>> = Vec::new();
+            for e in entities {
+                embeddings.push(mem_arch::embed::embed(&e.label, false).await);
+            }
 
             let store = state.store.read().await;
             for (i, eid) in entities_created.iter().enumerate() {
                 if i < embeddings.len() {
-                    if let Some(emb) = &embeddings[i] {
+                    if let Some(ref emb) = embeddings[i] {
                         if !emb.is_empty() && emb.iter().any(|x| *x != 0.0) {
                             let emb_str: String = emb.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(", ");
                             let _ = store.raw_query(&format!(

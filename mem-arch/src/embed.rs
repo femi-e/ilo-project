@@ -4,6 +4,9 @@
 //! Falls back gracefully if the server is unreachable — vector search is simply disabled.
 //!
 //! Expected server: llama-server --port 1235 --host 127.0.0.1 --embeddings --model <gguf>
+//!
+//! All public functions are async, using `reqwest` for non-blocking HTTP.
+//! No longer requires `spawn_blocking` wrappers at call sites.
 
 use serde_json::Value;
 
@@ -13,6 +16,11 @@ const EMBED_URL: &str = "http://127.0.0.1:1235/v1/embeddings";
 /// Default embedding dimension (bge-base-en-v1.5).
 const DEFAULT_DIM: usize = 768;
 
+/// Shared reqwest client (lazily created, connection-pooled).
+fn http_client() -> reqwest::Client {
+    reqwest::Client::new()
+}
+
 /// BGE instruction prefix for queries (improves retrieval quality).
 const QUERY_PREFIX: &str = "Represent this sentence for searching relevant passages: ";
 
@@ -21,7 +29,7 @@ const QUERY_PREFIX: &str = "Represent this sentence for searching relevant passa
 /// For queries, prepends the BGE instruction prefix automatically.
 /// For entity labels (is_query = false), embeds the text as-is.
 /// Returns None if the server is unreachable or returns an error.
-pub fn embed(text: &str, is_query: bool) -> Option<Vec<f32>> {
+pub async fn embed(text: &str, is_query: bool) -> Option<Vec<f32>> {
     let input = if is_query {
         format!("{}{}", QUERY_PREFIX, text)
     } else {
@@ -33,15 +41,14 @@ pub fn embed(text: &str, is_query: bool) -> Option<Vec<f32>> {
         "input": [input],
     });
 
-    let body_str = serde_json::to_string(&body).ok()?;
-
-    let resp = ureq::post(EMBED_URL)
-        .content_type("application/json")
-        .send(body_str)
+    let resp = http_client()
+        .post(EMBED_URL)
+        .json(&body)
+        .send()
+        .await
         .ok()?;
 
-    let raw = resp.into_body().read_to_string().ok()?;
-    let data: Value = serde_json::from_str(&raw).ok()?;
+    let data: Value = resp.json().await.ok()?;
     let embedding = data["data"][0]["embedding"].as_array()?;
 
     Some(embedding.iter().map(|v| v.as_f64().unwrap_or(0.0) as f32).collect())
@@ -49,7 +56,7 @@ pub fn embed(text: &str, is_query: bool) -> Option<Vec<f32>> {
 
 /// Embed multiple texts in batch.
 /// Returns None if the server is unreachable or returns an error.
-pub fn embed_batch(texts: &[&str], is_query: bool) -> Option<Vec<Vec<f32>>> {
+pub async fn embed_batch(texts: &[&str], is_query: bool) -> Option<Vec<Vec<f32>>> {
     let inputs: Vec<String> = if is_query {
         texts.iter().map(|t| format!("{}{}", QUERY_PREFIX, t)).collect()
     } else {
@@ -61,15 +68,14 @@ pub fn embed_batch(texts: &[&str], is_query: bool) -> Option<Vec<Vec<f32>>> {
         "input": inputs,
     });
 
-    let body_str = serde_json::to_string(&body).ok()?;
-
-    let resp = ureq::post(EMBED_URL)
-        .content_type("application/json")
-        .send(body_str)
+    let resp = http_client()
+        .post(EMBED_URL)
+        .json(&body)
+        .send()
+        .await
         .ok()?;
 
-    let raw = resp.into_body().read_to_string().ok()?;
-    let data: Value = serde_json::from_str(&raw).ok()?;
+    let data: Value = resp.json().await.ok()?;
     let data_arr = data["data"].as_array()?;
 
     let mut results = Vec::with_capacity(data_arr.len());
@@ -90,14 +96,14 @@ pub fn embedding_dim() -> usize {
 }
 
 /// Check if the embedding server is reachable.
-pub fn is_loaded() -> bool {
-    embed("ping", false).is_some()
+pub async fn is_loaded() -> bool {
+    embed("ping", false).await.is_some()
 }
 
 /// Warmup — check if the embedding server is available at startup.
 /// Logs a warning if unreachable so vector search is expected to be disabled.
-pub fn warmup() {
-    match ureq::get("http://127.0.0.1:1235/").call() {
+pub async fn warmup() {
+    match http_client().get("http://127.0.0.1:1235/").send().await {
         Ok(_) => tracing::info!("Embedding server reachable at 127.0.0.1:1235"),
         Err(e) => tracing::warn!("Embedding server unreachable at 127.0.0.1:1235: {e} — vector search disabled"),
     }
@@ -107,9 +113,9 @@ pub fn warmup() {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_embed_single() {
-        let emb = embed("Ailo", false);
+    #[tokio::test]
+    async fn test_embed_single() {
+        let emb = embed("Ailo", false).await;
         if let Some(v) = emb {
             assert_eq!(v.len(), DEFAULT_DIM);
             let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
@@ -119,10 +125,10 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_embed_query_prefix() {
-        let q = embed("What is Ailo?", true);
-        let doc = embed("Ailo", false);
+    #[tokio::test]
+    async fn test_embed_query_prefix() {
+        let q = embed("What is Ailo?", true).await;
+        let doc = embed("Ailo", false).await;
         if let (Some(qv), Some(docv)) = (q, doc) {
             assert_eq!(qv.len(), DEFAULT_DIM);
             assert_eq!(docv.len(), DEFAULT_DIM);
@@ -131,10 +137,10 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_embed_batch() {
+    #[tokio::test]
+    async fn test_embed_batch() {
         let texts = vec!["Ailo", "Rust", "Python"];
-        let results = embed_batch(&texts, false);
+        let results = embed_batch(&texts, false).await;
         if let Some(embeddings) = results {
             assert_eq!(embeddings.len(), 3);
             for emb in &embeddings {
@@ -147,9 +153,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_empty_text() {
-        let emb = embed("", false);
+    #[tokio::test]
+    async fn test_empty_text() {
+        let emb = embed("", false).await;
         if let Some(v) = emb {
             assert_eq!(v.len(), DEFAULT_DIM);
         } else {

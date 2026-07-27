@@ -23,7 +23,7 @@ const STOP_WORDS: [&str; 28] = ["the","and","for","about","with","tell","what",
 
 pub async fn retrieve(
     query: &str,
-    store: &dyn Store,
+    store: &impl Store,
     tag_index: &HashMap<String, Vec<NodeId>>,
     budget: Option<usize>,
     search_index: Option<&SearchIndex>,
@@ -65,7 +65,7 @@ pub async fn retrieve(
 async fn find_seeds(
     query: &str,
     tag_index: &HashMap<String, Vec<NodeId>>,
-    store: &dyn Store,
+    store: &impl Store,
     search_index: Option<&SearchIndex>,
     query_embedding: Option<&[f32]>,
 ) -> Vec<Seed> {
@@ -162,7 +162,7 @@ async fn find_seeds(
 
 async fn expand_frontier(
     seeds: &[Seed],
-    store: &dyn Store,
+    store: &impl Store,
     query: &str,
     max_hops: u8,
 ) -> Result<Vec<ActivatedNode>, StoreError> {

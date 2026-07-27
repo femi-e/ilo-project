@@ -132,7 +132,7 @@ async fn main() {
     // No stale socket to clean — using TCP port
 
     // Check embedding server availability (non-fatal if offline)
-    mem_arch::embed::warmup();
+    mem_arch::embed::warmup().await;
 
     // Warm cache (fast for small DBs, runs before server)
     let _ = store.warm_cache();

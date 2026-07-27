@@ -123,7 +123,7 @@ impl LearningSignal {
 
 /// Read a link's counter properties. Returns (retrieved, useful, last_used_ms, first_used_ms).
 /// Timestamps are wall-clock milliseconds since Unix epoch.
-async fn read_link_counters(store: &dyn Store, link_id: &str) -> (f64, f64, i64, i64) {
+async fn read_link_counters(store: &impl Store, link_id: &str) -> (f64, f64, i64, i64) {
     // retrieved and useful are stored as Float (confidence-gated fractional values)
     let r = store.get_property(link_id, "retrieved").await.ok().flatten()
         .and_then(|p| match p.value {
@@ -168,7 +168,7 @@ fn compute_weight(retrieved: f64, useful: f64, last_used_ms: i64, now_ms: i64, h
 ///
 /// `now_ms` is the wall-clock timestamp (milliseconds since Unix epoch) of the current moment.
 pub async fn learn(
-    store: &mut dyn Store,
+    store: &mut impl Store,
     signal: &LearningSignal,
     config: &LearningConfig,
     now_ms: i64,
@@ -234,7 +234,7 @@ pub async fn learn(
 /// Consolidation: check for hub nodes and compress dense clusters.
 /// Same logic as before — works on link weights.
 pub async fn consolidate(
-    store: &dyn Store,
+    store: &impl Store,
     config: &LearningConfig,
     turn_count: u32,
 ) -> Result<String, StoreError> {

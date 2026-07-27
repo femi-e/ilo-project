@@ -41,9 +41,6 @@ uuid = { version = "1", features = ["v7", "fast-rng"] }
 thiserror = "2"
 
 
-# Async
-async-trait = "0.1"
-
 # File locking
 libc = "0.2"
 
@@ -51,4 +48,4 @@ libc = "0.2"
 chrono = { version = "0.4", features = ["serde"] }
 
 # HTTP client (for embeddings via mistral.rs)
-ureq = { version = "3", features = [] }
+reqwest = { version = "0.12", features = ["json"] }
