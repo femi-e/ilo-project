@@ -65,68 +65,7 @@ function findLatestUserQuery(msgs: any[]): string {
 	return "(unknown)";
 }
 
-/// Compact dashboard showing scored/relevant chunks.
-function buildDashboard(messages: any[], tokenEstimate: number): string {
-	const budget = 80000;
-	const pct = Math.min(100, Math.round((tokenEstimate / budget) * 100));
-	const scores = ((globalThis as any).__lastChunkScores ?? {}) as Record<
-		string,
-		number
-	>;
 
-	// Count chunks by type
-	const counts: Record<string, { total: number; scored: number }> = {};
-	for (let i = 0; i < messages.length; i++) {
-		const key = "chunk_" + i;
-		const ctype = messages[i]?.customType || messages[i]?.role || "?";
-		if (!counts[ctype]) counts[ctype] = { total: 0, scored: 0 };
-		counts[ctype].total++;
-		if (scores[key] !== undefined) counts[ctype].scored++;
-	}
-
-	// Build compact summary
-	const lines: string[] = [
-		`## Context (${nChunks(messages.length)} · ~${tokenEstimate} / ${budget} tok = ${pct}%)`,
-	];
-	for (const [ctype, c] of Object.entries(counts)) {
-		const bar = scoreBar(c.scored);
-		lines.push(`  ${ctype}: ${c.total} ${bar}`);
-	}
-
-	// Only list scored chunks (top 5 lowest-scored + recent)
-	const scored = messages
-		.map((_m: any, i: number) => ({
-			idx: i,
-			key: "chunk_" + i,
-			score: scores["chunk_" + i] ?? 0,
-		}))
-		.sort((a, b) => a.score - b.score)
-		.slice(0, 5)
-		.sort((a, b) => a.idx - b.idx);
-	if (scored.length > 0) {
-		lines.push("");
-		lines.push("Edge chunks:");
-		for (const s of scored) {
-			const ctype = messages[s.idx]?.customType || messages[s.idx]?.role || "?";
-			lines.push(`  ch${s.idx} ${ctype} = ${s.score.toFixed(2)}`);
-		}
-	}
-
-	return lines.join("\n");
-}
-
-/// Simple bar visualization (10 chars)
-function scoreBar(n: number): string {
-	const filled = Math.min(10, Math.round((n / Math.max(n, 1)) * 10));
-	return "[" + "#".repeat(filled) + "-".repeat(10 - filled) + "]";
-}
-
-/// Human-readable chunk count
-function nChunks(n: number): string {
-	if (n < 10) return String(n);
-	if (n < 1000) return String(n);
-	return (n / 1000).toFixed(1) + "k";
-}
 
 /// Estimate tokens from a messages array.
 function estimateTokens(messages: any[]): number {
@@ -227,13 +166,7 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 					);
 				}
 
-				// Store scores for dashboard
-				const scoreMap: Record<string, number> = {};
-				for (const s of scored) {
-					scoreMap["chunk_" + s.idx] = s.score;
 				}
-				(globalThis as any).__lastChunkScores = scoreMap;
-			}
 
 			// Extract entities and claims from the latest user query using 4B model
 			if (_4bAvailable && latestQuery && latestQuery !== "(unknown)") {
@@ -271,18 +204,7 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 				}
 			}
 
-			// Dashboard injection
-			const finalMsgs = payload.messages;
-			const dashboard = buildDashboard(finalMsgs, estimateTokens(finalMsgs));
-			const lastUserIdx = finalMsgs.length - 1;
-			if (finalMsgs[lastUserIdx]?.role === "user") {
-				const existing = finalMsgs[lastUserIdx].content;
-				if (typeof existing === "string") {
-					finalMsgs[lastUserIdx].content = `${dashboard}\n\n${existing}`;
-				} else if (Array.isArray(existing) && existing[0]?.text) {
-					existing[0].text = `${dashboard}\n\n${existing[0].text}`;
-				}
-			}
+
 
 			// Memory → system role conversion
 			for (const msg of payload.messages) {
