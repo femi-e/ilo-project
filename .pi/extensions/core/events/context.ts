@@ -1,5 +1,9 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { analyzeWith4BModel, scoreChunksWith4BModel, is4BModelAvailable } from "../lib/context-rebuild-llm";
+import {
+	analyzeWith4BModel,
+	scoreChunksWith4BModel,
+	is4BModelAvailable,
+} from "../lib/context-rebuild-llm";
 import { ilo } from "../lib/ilo-client";
 
 const SYSTEM_PROMPT = `# Identity

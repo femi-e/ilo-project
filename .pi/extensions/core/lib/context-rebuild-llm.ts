@@ -117,6 +117,24 @@ Claim categories (7 types):
 Be thorough but precise. Only extract entities and claims that are clearly present in the query. Set confidence based on how explicit the evidence is (0.9+ for direct mentions, 0.5-0.8 for strong implications, below 0.5 for weak signals).`;
 
 // ── Build user prompt with query + optional context ─────────
+// NOTE: Instructions are embedded in the user message because 4B models
+// follow user messages more reliably than system messages.
+
+const USER_INSTRUCTIONS = `
+
+---
+Extract structured information from the above. Respond with ONLY a JSON object (no markdown, no code fences).
+
+Schema:
+{
+  "analysis": "description of the task",
+  "plan": "execution plan",
+  "chunk_scores": {},
+  "extracted_entities": [{"name": "...", "type": "component|file|tool|service|concept|person|library|config|task|other", "confidence": 0.0-1.0, "tags": ["..."]}],
+  "extracted_claims": [{"subject": "a", "relationship": "depends on", "object": "b", "category": "Depends|Intends|Implements|Contains|Relates|References|Precedes", "confidence": 0.0-1.0}]
+}
+
+Be thorough but precise. Set confidence: 0.9+ for direct mentions, 0.5-0.8 for strong implications, below 0.5 for weak signals.`;
 
 function buildUserPrompt(
 	query: string,
@@ -145,6 +163,9 @@ function buildUserPrompt(
 			'For chunk_scores, score each chunk index (e.g., "0", "1", "2") with a relevance score 0.0-1.0 relative to the user query.',
 		);
 	}
+
+	// Append JSON instructions directly to user message (4B models follow user msg best)
+	parts.push(USER_INSTRUCTIONS);
 
 	return parts.join("\n");
 }
@@ -346,7 +367,8 @@ export async function scoreChunksWith4BModel(
 		.map((c, i) => `[${i}] ${c.role}: ${c.preview}`)
 		.join("\n");
 
-	const userPrompt = `You manage context for a coding assistant. Score each message chunk for relevance to the current conversation. Return ONLY a JSON array of scores 0.0-1.0 matching the chunk indices below.
+	const n = chunks.length;
+	const userPrompt = `You manage context for a coding assistant. Score each message chunk for relevance to the current conversation. Return ONLY a JSON array of exactly ${n} scores (one per chunk) 0.0-1.0 matching the chunk indices below.
 
 Latest user query:
 ${latestQuery}
