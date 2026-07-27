@@ -193,7 +193,7 @@ pub async fn ingest_handler(
 
     // Use shared helper for claim + entity-claim evidence links
     let store_lock = state.store.read().await;
-    let claim_mutations = super::helpers::build_claim_mutations(&*store_lock, &claims, &mut entity_ids).await;
+    let claim_mutations = super::helpers::build_claim_mutations(&store_lock, &claims, &mut entity_ids).await;
     drop(store_lock);
     let claim_ids: Vec<String> = claim_mutations.iter().filter_map(|m| {
         if let StoreMutation::CreateNode { id, type_, .. } = m {

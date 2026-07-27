@@ -103,7 +103,7 @@ fn build_test_graph(store: &mut LadybugStore, labels: &[&str]) -> HashMap<String
             let to = format!("e_{}", j);
             mutations.push(StoreMutation::CreateLink {
                 id: format!("l_{}_{}", i, j),
-                from, to, type_: LinkType::Relates, tags: vec![], weight: 0.3,
+                from, to, type_: LinkType::Relates, relationship: String::new(), tags: vec![], weight: 0.3, confidence: 0.5,
             });
         }
     }

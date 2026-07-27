@@ -84,9 +84,9 @@ async fn test_5000_links_batch() {
             id: format!("l_{}", i),
             from: format!("e_{}", from),
             to: format!("e_{}", to),
-            type_: LinkType::Relates,
+            type_: LinkType::Relates, relationship: String::new(),
             tags: vec![],
-            weight: 0.5,
+            weight: 0.5, confidence: 0.5,
         });
     }
     apply_batch(&mut store, link_mutations).await;
@@ -122,7 +122,7 @@ async fn test_ppr_on_dense_graph() {
             mutations.push(StoreMutation::CreateLink {
                 id: format!("l_{}_{}", i, j),
                 from: format!("e_{}", i), to: format!("e_{}", j),
-                type_: LinkType::Relates, tags: vec![], weight,
+                type_: LinkType::Relates, relationship: String::new(), tags: vec![], weight, confidence: 0.5,
             });
             count += 1;
         }
@@ -216,9 +216,9 @@ async fn test_100_turn_session() {
                 id: format!("ctx_{}", i),
                 from: turn_id.clone(),
                 to: format!("e_session_{}", i),
-                type_: LinkType::Mentions,
+                type_: LinkType::References, relationship: String::new(),
                 tags: vec![],
-                weight: 0.5,
+                weight: 0.5, confidence: 0.5,
             });
         }
 
@@ -228,9 +228,9 @@ async fn test_100_turn_session() {
                 id: format!("seq_{}", i),
                 from: prev.clone(),
                 to: turn_id.clone(),
-                type_: LinkType::Precedes,
+                type_: LinkType::Precedes, relationship: String::new(),
                 tags: vec![],
-                weight: 0.9,
+                weight: 0.9, confidence: 0.5,
             });
         }
 
@@ -291,7 +291,7 @@ async fn test_learning_200_turns() {
             mutations.push(StoreMutation::CreateLink {
                 id: format!("l_{}_{}", i, j),
                 from: entity_ids[i].clone(), to: entity_ids[j].clone(),
-                type_: LinkType::Relates, tags: vec![], weight: 0.3,
+                type_: LinkType::Relates, relationship: String::new(), tags: vec![], weight: 0.3, confidence: 0.5,
             });
         }
     }

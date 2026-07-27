@@ -254,7 +254,7 @@ pub async fn delete_entity(
     let mut links_del = 0usize;
 
     // Find claims that Support this entity
-    let incoming = store.find_links_to(&id, Some(&LinkType::Supports)).await.unwrap_or_default();
+    let incoming = store.find_links_to(&id, Some("relates")).await.unwrap_or_default();
     for link in &incoming {
         // Delete the claim node
         let claim_id = &link.from;
@@ -280,7 +280,7 @@ pub async fn delete_entity(
     }
     for link in &incoming {
         // Don't double-count links already handled via claim deletes
-        if link.type_ != LinkType::Supports {
+        if link.type_.as_str() != "relates" {
             mutations.push(StoreMutation::DeleteLink { id: link.id.clone() });
             links_del += 1;
         }
@@ -354,9 +354,9 @@ pub async fn get_claim(
                 }
             }
 
-            let supports_links = store.find_links(&id, Some(&LinkType::Supports)).await.unwrap_or_default();
+            let relates_links = store.find_links(&id, Some("relates")).await.unwrap_or_default();
             let mut entities = Vec::new();
-            for link in &supports_links {
+            for link in &relates_links {
                 if let Some(en) = store.get_node(&link.to).await.unwrap_or(None) {
                     entities.push(EntitySummary {
                         id: en.id,
@@ -431,8 +431,8 @@ pub async fn delete_claim(
 
     let mut mutations = Vec::new();
 
-    // Remove Supports links (entities stay)
-    let outgoing = store.find_links(&id, Some(&LinkType::Supports)).await.unwrap_or_default();
+    // Remove Relates links (entities stay)
+    let outgoing = store.find_links(&id, Some("relates")).await.unwrap_or_default();
     for link in &outgoing {
         mutations.push(StoreMutation::DeleteLink { id: link.id.clone() });
     }
@@ -473,14 +473,17 @@ pub async fn create_link(
     };
 
     let link_type = req.r#type.as_deref().unwrap_or("relates").parse::<LinkType>().unwrap_or(LinkType::Relates);
+    let rel_str = req.r#type.clone().unwrap_or_else(|| "relates".into());
     let lid = uid("l");
     let mutations = vec![StoreMutation::CreateLink {
         id: lid.clone(),
         from: from_id.clone(),
         to: to_id.clone(),
         type_: link_type,
+        relationship: rel_str,
         tags: vec![],
         weight: req.weight.unwrap_or(0.5),
+        confidence: req.weight.unwrap_or(0.5),
     }];
 
     match state.store.write().await.write_maintenance(mutations).await {
@@ -630,7 +633,8 @@ pub async fn batch(
                 let seq_id = uid("seq");
                 mutations.push(StoreMutation::CreateLink {
                     id: seq_id, from: prev.id.clone(), to: turn_id.clone(),
-                    type_: LinkType::Precedes, tags: vec![], weight: 0.9,
+                    type_: LinkType::Precedes, relationship: String::new(),
+                    tags: vec![], weight: 0.9, confidence: 1.0,
                 });
             }
         }
@@ -664,7 +668,8 @@ pub async fn batch(
         for eid in entity_ids.values() {
             mutations.push(StoreMutation::CreateLink {
                 id: uid("ctx"), from: turn_id.clone(), to: eid.clone(),
-                type_: LinkType::Mentions, tags: vec![], weight: 0.5,
+                type_: LinkType::References, relationship: String::new(),
+                tags: vec![], weight: 0.5, confidence: 0.5,
             });
         }
     }
@@ -675,13 +680,16 @@ pub async fn batch(
         for link_req in links {
             let lid = uid("l");
             let lt = link_req.r#type.as_deref().unwrap_or("relates").parse::<LinkType>().unwrap_or(LinkType::Relates);
+            let rel_str = link_req.r#type.clone().unwrap_or_else(|| "relates".into());
             mutations.push(StoreMutation::CreateLink {
                 id: lid.clone(),
                 from: link_req.from.clone(),
                 to: link_req.to.clone(),
                 type_: lt,
+                relationship: rel_str,
                 tags: vec![],
                 weight: link_req.weight.unwrap_or(0.5),
+                confidence: link_req.weight.unwrap_or(0.5),
             });
             links_created.push(lid);
         }
