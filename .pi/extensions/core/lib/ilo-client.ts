@@ -144,6 +144,8 @@ class IloClient {
     entities: EntityInput[];
     claims: ClaimInput[];
     turnIndex: number;
+    /** Labels of entities already stored in the graph to link to this turn. */
+    allEntities?: string[];
   }) {
     return this.request<{ status: string; turn_id: string; phase: string; entities_created: number }>('POST', '/remember', {
       turn_index: params.turnIndex,
@@ -151,6 +153,7 @@ class IloClient {
       response: params.response,
       entities: params.entities,
       claims: params.claims,
+      all_entities: params.allEntities,
     });
   }
 

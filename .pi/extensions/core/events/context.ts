@@ -209,34 +209,33 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 					const result = await analyzeWith4BModel(latestQuery, {
 						contextSummary: `Session has ${updatedMsgs.length} chunks (~${estimateTokens(updatedMsgs)} tokens)`,
 					});
-					if (
-						result &&
-						(result.extracted_entities.length > 0 ||
-							result.extracted_claims.length > 0)
-					) {
-						// Store entity labels for turn_end learning signal
+					if (result) {
+						// Save labels + claims for turn_end to use in a single atomic write
+						(globalThis as any).__pendingEntityLabels =
+							result.extracted_entities.map((e: any) => e.name);
+						(globalThis as any).__pendingClaimInputs =
+							result.extracted_claims.map((c: any) => ({
+								content: `${c.subject} ${c.relationship} ${c.object}`,
+								confidence: c.confidence,
+								entities: [c.subject, c.object],
+								relationship: c.relationship,
+								category: c.category,
+							}));
+
+						// Store entity nodes eagerly so they're findable by recall
+						// during the current turn (no turn created here)
+						const entityInputs = result.extracted_entities.map((e: any) => ({
+							label: e.name,
+							tags: [...(e.tags || []), e.type],
+							confidence: e.confidence,
+						}));
+						if (entityInputs.length > 0) {
+							await ilo.createEntities(entityInputs).catch(() => {});
+						}
+
+						// Also keep old name for backward compat (used by turn.ts learn)
 						(globalThis as any).__lastExtractedLabels =
 							result.extracted_entities.map((e: any) => e.name);
-
-						await ilo
-							.remember({
-								query: latestQuery,
-								response: result.analysis,
-								entities: result.extracted_entities.map((e) => ({
-									label: e.name,
-									tags: [...(e.tags || []), e.type],
-									confidence: e.confidence,
-								})),
-								claims: result.extracted_claims.map((c) => ({
-									content: `${c.subject} ${c.relationship} ${c.object}`,
-									confidence: c.confidence,
-									entities: [c.subject, c.object],
-									relationship: c.relationship,
-									category: c.category,
-								})),
-								turnIndex: 0,
-							})
-							.catch(() => {});
 					}
 				} catch {
 					// Non-critical — extraction is best-effort

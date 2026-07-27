@@ -83,26 +83,36 @@ export function registerTurnHooks(pi: ExtensionAPI): void {
 		}
 
 		try {
-			// Store the turn for conversation history
+			// Collect entities + claims extracted by 4B model in context.ts
+			const pendingEntityLabels: string[] =
+				(globalThis as any).__pendingEntityLabels || [];
+			const pendingClaimInputs: any[] =
+				(globalThis as any).__pendingClaimInputs || [];
+			// Also check old key for backward compat during transition
+			const fallbackLabels: string[] =
+				(globalThis as any).__lastExtractedLabels || [];
+			const allLabels =
+				pendingEntityLabels.length > 0 ? pendingEntityLabels : fallbackLabels;
+
+			// Single atomic write: turn + claims + entity links
 			await ilo
 				.remember({
 					query: userText,
 					response: responseText,
 					entities: [],
-					claims: [],
+					claims: pendingClaimInputs,
+					allEntities: allLabels,
 					turnIndex: state.turnCount++,
 				})
 				.catch(() => {});
 
-			// Learning signal: all 4B-extracted entities are relevant to the query
-			const extractedLabels: string[] =
-				(globalThis as any).__lastExtractedLabels || [];
-			if (extractedLabels.length > 0) {
+			// Learning signal: all extracted entities are relevant to the query
+			if (allLabels.length > 0) {
 				await ilo
 					.learn({
 						query: userText,
 						responseText,
-						usedLabels: extractedLabels,
+						usedLabels: allLabels,
 						quality: 0.8,
 					})
 					.catch(() => {});
