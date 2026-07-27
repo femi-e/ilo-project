@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-// ilo, ensureIlo, getState imported but reserved for future recall injection
+import { analyzeWith4BModel, scoreChunksWith4BModel, is4BModelAvailable } from "../lib/context-rebuild-llm";
+import { ilo } from "../lib/ilo-client";
 
 const SYSTEM_PROMPT = `# Identity
 
@@ -21,9 +22,6 @@ Memory tools:
 - \`entity_lookup\` — Get full details on a specific entity.
 - \`entity_connect\` — Link two related concepts.
 
-# Context Rebuild
-When starting a new task, call \`context_rebuild\` to analyze the request, extract entities and claims, and store them in persistent memory. This helps build a knowledge graph across sessions.
-
 # Context Window
 The context window is managed automatically. Old or irrelevant context is evicted to keep you focused. Memory entries compete with conversation turns for space. If you need information from earlier, use \`memory_search\`. Entities and claims survive eviction.
 
@@ -37,55 +35,9 @@ The context window is managed automatically. Old or irrelevant context is evicte
 
 let SYSTEM_INJECTED = false;
 
-/// URL of the small local model used for context scoring.
-const LOCAL_MODEL_URL = `http://127.0.0.1:${process.env.LOCAL_CHAT_PORT_START || 1234}/v1/chat/completions`;
-
-/// Ask the small model to score each message chunk for relevance.
-/// Returns an array of scores (0.0 = drop, 1.0 = essential), or null if the model is unreachable.
-async function scoreContextWithModel(msgs: any[]): Promise<number[] | null> {
-	const latestQuery = findLatestUserQuery(msgs);
-
-	// Build a compact chunk report — just enough for the model to judge relevance
-	const chunkSummary = msgs
-		.map((m: any, i: number) => {
-			const role = m.role || m.customType || "?";
-			const preview = extractPreview(m);
-			return `[${i}] ${role}: ${preview}`;
-		})
-		.join("\n");
-
-	const modelPrompt = `You manage context for a coding assistant. Score each message chunk for relevance to the current conversation. Return ONLY a JSON array of scores 0.0-1.0 matching the chunk indices below.
-
-Latest user query:
-${latestQuery}
-
-Chunks:
-${chunkSummary}`;
-
-	try {
-		const res = await fetch(LOCAL_MODEL_URL, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			signal: AbortSignal.timeout(5000),
-			body: JSON.stringify({
-				model: "default",
-				messages: [{ role: "user", content: modelPrompt }],
-				temperature: 0.1,
-				max_tokens: 512,
-			}),
-		});
-		if (!res.ok) return null;
-		const data = await res.json();
-		const text = data?.choices?.[0]?.message?.content || "";
-		const json = text.match(/\[[\s\S]*\]/);
-		if (!json) return null;
-		const scores: number[] = JSON.parse(json[0]);
-		if (!Array.isArray(scores) || scores.length !== msgs.length) return null;
-		return scores.map((s) => Math.max(0, Math.min(1, Number(s))));
-	} catch {
-		return null;
-	}
-}
+/// 4B model availability cache (checked once per session)
+let _4bAvailable = false;
+let _4bChecked = false;
 
 /// Extract a preview (first ~80 chars) of a message's content.
 function extractPreview(msg: any): string {
@@ -210,7 +162,7 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 		}
 	});
 
-	// Small-model context scoring + dashboard + memory role conversion
+	// 4B model context scoring + entity extraction + dashboard
 	pi.on("before_provider_request", async (event: any, _ctx: any) => {
 		const payload = event.payload;
 		const msgs = payload?.messages;
@@ -218,32 +170,48 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 
 		try {
 			const BUDGET = 80000;
-			// Always ask the small model to score relevance
-			const modelScores = await scoreContextWithModel(msgs);
+			const latestQuery = findLatestUserQuery(msgs);
+
+			// Build chunk info for scoring
+			const chunkInfo = msgs.map((m: any) => ({
+				role: m.role || m.customType || "?",
+				preview: extractPreview(m),
+			}));
+
+			// Check 4B model availability (lazy, once per session)
+			if (!_4bChecked) {
+				_4bAvailable = await is4BModelAvailable();
+				_4bChecked = true;
+				if (_4bAvailable) {
+					console.error("[context] 4B context-rebuild model available");
+				}
+			}
+
+			// Score chunks with 4B model
+			const modelScores = _4bAvailable
+				? await scoreChunksWith4BModel(chunkInfo, latestQuery)
+				: null;
 
 			if (modelScores) {
-				// Small model scored everything — keep only what fits budget + essentials
 				type Scored = { idx: number; score: number };
 				const scored: Scored[] = modelScores.map((s, i) => ({
 					idx: i,
 					score: s,
 				}));
 
-				// Always keep: last user query + last assistant response + chunks with score >= 0.5
+				// Always keep: last user query + last assistant response
 				const alwaysKeep = new Set<number>();
-				alwaysKeep.add(msgs.length - 1); // last message (should be user query)
-				if (msgs.length >= 2) alwaysKeep.add(msgs.length - 2); // previous assistant
+				alwaysKeep.add(msgs.length - 1);
+				if (msgs.length >= 2) alwaysKeep.add(msgs.length - 2);
 
 				const droppable = scored
 					.filter((s) => !alwaysKeep.has(s.idx) && s.score < 0.5)
 					.sort((a, b) => a.score - b.score);
 
-				// Drop lowest-scored until we fit within budget
 				const toDrop = new Set<number>();
 				for (const s of droppable) {
 					if (alwaysKeep.has(s.idx)) continue;
 					toDrop.add(s.idx);
-					// Re-check budget after each drop
 					const remaining = msgs.filter((_: any, i: number) => !toDrop.has(i));
 					if (estimateTokens(remaining) <= BUDGET) break;
 				}
@@ -251,18 +219,53 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 				if (toDrop.size > 0) {
 					payload.messages = msgs.filter((_: any, i: number) => !toDrop.has(i));
 					console.error(
-						`[context] Model scored ${msgs.length} chunks, dropped ${toDrop.size}`,
+						`[context] 4B scored ${msgs.length} chunks, dropped ${toDrop.size}`,
 					);
 				}
 
-				// Store scores for dashboard display
+				// Store scores for dashboard
 				const scoreMap: Record<string, number> = {};
 				for (const s of scored) {
 					scoreMap["chunk_" + s.idx] = s.score;
 				}
 				(globalThis as any).__lastChunkScores = scoreMap;
 			}
-			// If model unreachable, proceed without scoring — just dashboard + role conversion
+
+			// Extract entities and claims from the latest user query using 4B model
+			if (_4bAvailable && latestQuery && latestQuery !== "(unknown)") {
+				try {
+					const result = await analyzeWith4BModel(latestQuery, {
+						contextSummary: `Session has ${msgs.length} chunks (~${estimateTokens(msgs)} tokens)`,
+					});
+					if (
+						result &&
+						(result.extracted_entities.length > 0 ||
+							result.extracted_claims.length > 0)
+					) {
+						await ilo
+							.remember({
+								query: latestQuery,
+								response: result.analysis,
+								entities: result.extracted_entities.map((e) => ({
+									label: e.name,
+									tags: [...(e.tags || []), e.type],
+									confidence: e.confidence,
+								})),
+								claims: result.extracted_claims.map((c) => ({
+									content: `${c.subject} ${c.relationship} ${c.object}`,
+									confidence: c.confidence,
+									entities: [c.subject, c.object],
+									relationship: c.relationship,
+									category: c.category,
+								})),
+								turnIndex: 0,
+							})
+							.catch(() => {});
+					}
+				} catch {
+					// Non-critical — extraction is best-effort
+				}
+			}
 
 			// Dashboard injection
 			const finalMsgs = payload.messages;

@@ -66,6 +66,8 @@ export interface ContextRebuildResult {
 
 const SYSTEM_PROMPT = `You are a context analysis engine for a coding agent with persistent memory. Your job is to analyze a user query and the current context, then extract structured information.
 
+CRITICAL: Do NOT think step by step. Do NOT include any reasoning or thinking process. Output ONLY valid JSON immediately with no preamble.
+
 You MUST respond with ONLY a valid JSON object (no markdown, no code fences). Use this exact schema:
 
 {
@@ -330,6 +332,55 @@ function combineAbortSignals(s1: AbortSignal, s2: AbortSignal): AbortSignal {
 }
 
 // ── Main entry point ──────────────────────────────────────
+
+/**
+ * Score context chunks for relevance using the 4B model.
+ * Returns an array of scores (0.0 = drop, 1.0 = essential), or null if the model is unreachable.
+ */
+export async function scoreChunksWith4BModel(
+	chunks: Array<{ role: string; preview: string }>,
+	latestQuery: string,
+	signal?: AbortSignal,
+): Promise<number[] | null> {
+	const chunkSummary = chunks
+		.map((c, i) => `[${i}] ${c.role}: ${c.preview}`)
+		.join("\n");
+
+	const userPrompt = `You manage context for a coding assistant. Score each message chunk for relevance to the current conversation. Return ONLY a JSON array of scores 0.0-1.0 matching the chunk indices below.
+
+Latest user query:
+${latestQuery}
+
+Chunks:
+${chunkSummary}`;
+
+	try {
+		const res = await fetch(_4B_BASE, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			signal: signal
+				? combineAbortSignals(signal, AbortSignal.timeout(_4B_TIMEOUT))
+				: AbortSignal.timeout(_4B_TIMEOUT),
+			body: JSON.stringify({
+				model: _4B_MODEL,
+				messages: [{ role: "user", content: userPrompt }],
+				temperature: 0.1,
+				max_tokens: 2048,
+				chat_template_kwargs: { enable_thinking: false },
+			}),
+		});
+		if (!res.ok) return null;
+		const data = await res.json();
+		const text = data?.choices?.[0]?.message?.content || "";
+		const json = text.match(/\[[\s\S]*\]/);
+		if (!json) return null;
+		const scores: number[] = JSON.parse(json[0]);
+		if (!Array.isArray(scores) || scores.length !== chunks.length) return null;
+		return scores.map((s) => Math.max(0, Math.min(1, Number(s))));
+	} catch {
+		return null;
+	}
+}
 
 /**
  * Analyze a user query and context using the 4B model.
