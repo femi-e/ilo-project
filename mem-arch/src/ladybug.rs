@@ -82,7 +82,7 @@ impl LadybugStore {
         let _ = c.query("LOAD vector");
         c.query("CREATE NODE TABLE IF NOT EXISTS Node (id STRING PRIMARY KEY, type STRING, tags STRING[], label STRING, embedding FLOAT[768], confidence DOUBLE DEFAULT 0.0, created_at TIMESTAMP DEFAULT current_timestamp(), updated_at TIMESTAMP DEFAULT current_timestamp())")?;
         c.query("CREATE NODE TABLE IF NOT EXISTS Prop (id STRING PRIMARY KEY, owner_id STRING, owner_kind STRING, key STRING, kind STRING, val_str STRING, val_float DOUBLE, val_int INT64, val_bool BOOLEAN, val_json JSON, created_at TIMESTAMP DEFAULT current_timestamp(), updated_at TIMESTAMP DEFAULT current_timestamp())")?;
-        c.query("CREATE REL TABLE IF NOT EXISTS LINK (FROM Node TO Node, id STRING PRIMARY KEY, type STRING, relationship STRING DEFAULT '', tags STRING[], weight DOUBLE DEFAULT 0.0, confidence DOUBLE DEFAULT 0.0, created_at TIMESTAMP DEFAULT current_timestamp())")?;
+        c.query("CREATE REL TABLE IF NOT EXISTS LINK (FROM Node TO Node, id STRING PRIMARY KEY, type STRING, rel STRING DEFAULT '', tags STRING[], weight DOUBLE DEFAULT 0.0, confidence DOUBLE DEFAULT 0.0, created_at TIMESTAMP DEFAULT current_timestamp())")?;
         for i in &["idx_node_type","idx_prop_owner","idx_prop_owner_key","idx_link_type","idx_link_from","idx_link_to"] {
             let t = if i.starts_with("idx_node"){"Node"}else if i.starts_with("idx_prop"){"Prop"}else{"LINK"};
             let col = match *i{"idx_node_type"=>"type","idx_prop_owner"=>"owner_id","idx_prop_owner_key"=>"owner_id,key","idx_link_type"=>"type","idx_link_from"=>"from","idx_link_to"=>"to",_=>""};
@@ -111,10 +111,10 @@ impl LadybugStore {
                 StoreMutation::UpdateLinkWeight { id, weight } => {
                     if let Some(link) = lc.get_mut(id) { link.weight = *weight; }
                 },
-                StoreMutation::CreateLink { id, from, to, type_, relationship, tags, weight, confidence } => {
+                StoreMutation::CreateLink { id, from, to, type_, rel, tags, weight, confidence } => {
                     lc.insert(id.clone(), LinkRecord {
                         id: id.clone(), from: from.clone(), to: to.clone(),
-                        type_: type_.clone(), relationship: relationship.clone(),
+                        type_: type_.clone(), rel: rel.clone(),
                         tags: tags.clone(), weight: *weight, confidence: *confidence,
                         created_at: chrono::Utc::now().naive_utc(),
                     });
@@ -165,7 +165,7 @@ impl LadybugStore {
                 nc.insert(node.id.clone(), node);
             } }
         }
-        let mut link_q = c.query("MATCH (a:Node)-[l:LINK]->(b:Node) RETURN l.id, a.id, b.id, l.type, l.relationship, l.weight, l.confidence, l.created_at")?;
+        let mut link_q = c.query("MATCH (a:Node)-[l:LINK]->(b:Node) RETURN l.id, a.id, b.id, l.type, l.rel, l.weight, l.confidence, l.created_at")?;
         {
             let mut lc = match self.link_cache.lock() {
                 Ok(guard) => guard,
@@ -244,13 +244,13 @@ fn apply(c: &Connection, m: &StoreMutation) -> Result<(), StoreError> {
                 ("key", Value::String(key.clone())),
             ])?;
         }
-        StoreMutation::CreateLink { id, from, to, type_, relationship, tags, weight, confidence } => {
-            exec_params(c, "MATCH (a:Node {id: $from}), (b:Node {id: $to}) CREATE (a)-[:LINK {id: $lid, type: $type, relationship: $relationship, tags: $tags, weight: $weight, confidence: $confidence}]->(b)", vec![
+        StoreMutation::CreateLink { id, from, to, type_, rel, tags, weight, confidence } => {
+            exec_params(c, "MATCH (a:Node {id: $from}), (b:Node {id: $to}) CREATE (a)-[:LINK {id: $lid, type: $type, rel: $rel, tags: $tags, weight: $weight, confidence: $confidence}]->(b)", vec![
                 ("from", Value::String(from.clone())),
                 ("to", Value::String(to.clone())),
                 ("lid", Value::String(id.clone())),
                 ("type", Value::String(type_.as_str().into())),
-                ("relationship", Value::String(relationship.clone())),
+                ("rel", Value::String(rel.clone())),
                 ("tags", tags_to_value(tags)),
                 ("weight", Value::Double(*weight)),
                 ("confidence", Value::Double(*confidence)),
@@ -321,7 +321,7 @@ fn row_to_link(row: &[Value]) -> Option<LinkRecord> {
         let w=match &row[5]{Value::Double(d)=>*d,_=>0.0};
         let conf=match &row[6]{Value::Double(d)=>*d,_=>0.0};
         let created_at = ts_from_value(&row[7]);
-        Some(LinkRecord{id:id.clone(),from:frm.clone(),to:to.clone(),type_:typ.parse::<LinkType>().unwrap_or(LinkType::Depends),relationship:rel,tags:vec![],weight:w,confidence:conf,created_at})
+        Some(LinkRecord{id:id.clone(),from:frm.clone(),to:to.clone(),type_:typ.parse::<LinkType>().unwrap_or(LinkType::Depends),rel,tags:vec![],weight:w,confidence:conf,created_at})
     }else{None}}else{None}}else{None}}else{None}
 }
 

@@ -40,7 +40,7 @@ impl MockStore {
     pub fn add_link(&self, id: &str, from: &str, to: &str, type_: LinkType, relationship: &str, weight: f64, confidence: f64) {
         self.links.lock().unwrap().insert(id.to_string(), LinkRecord {
             id: id.to_string(), from: from.to_string(), to: to.to_string(),
-            type_, relationship: relationship.to_string(), tags: vec![], weight, confidence,
+            type_, rel: relationship.to_string(), tags: vec![], weight, confidence,
             created_at: chrono::Utc::now().naive_utc(),
         });
     }

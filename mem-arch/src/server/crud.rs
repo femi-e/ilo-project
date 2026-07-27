@@ -480,7 +480,7 @@ pub async fn create_link(
         from: from_id.clone(),
         to: to_id.clone(),
         type_: link_type,
-        relationship: rel_str,
+        rel: rel_str,
         tags: vec![],
         weight: req.weight.unwrap_or(0.5),
         confidence: req.weight.unwrap_or(0.5),
@@ -633,7 +633,7 @@ pub async fn batch(
                 let seq_id = uid("seq");
                 mutations.push(StoreMutation::CreateLink {
                     id: seq_id, from: prev.id.clone(), to: turn_id.clone(),
-                    type_: LinkType::Precedes, relationship: String::new(),
+                    type_: LinkType::Precedes, rel: String::new(),
                     tags: vec![], weight: 0.9, confidence: 1.0,
                 });
             }
@@ -668,7 +668,7 @@ pub async fn batch(
         for eid in entity_ids.values() {
             mutations.push(StoreMutation::CreateLink {
                 id: uid("ctx"), from: turn_id.clone(), to: eid.clone(),
-                type_: LinkType::References, relationship: String::new(),
+                type_: LinkType::References, rel: String::new(),
                 tags: vec![], weight: 0.5, confidence: 0.5,
             });
         }
@@ -686,7 +686,7 @@ pub async fn batch(
                 from: link_req.from.clone(),
                 to: link_req.to.clone(),
                 type_: lt,
-                relationship: rel_str,
+                rel: rel_str,
                 tags: vec![],
                 weight: link_req.weight.unwrap_or(0.5),
                 confidence: link_req.weight.unwrap_or(0.5),
