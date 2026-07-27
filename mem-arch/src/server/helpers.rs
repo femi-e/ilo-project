@@ -110,7 +110,8 @@ pub async fn build_claim_mutations(
                 let link_id = uid("ev");
                 mutations.push(StoreMutation::CreateLink {
                     id: link_id, from: cid.clone(), to: target_id,
-                    type_: LinkType::Supports, tags: vec![], weight: conf,
+                    type_: LinkType::Relates, relationship: String::new(),
+                    tags: vec![], weight: conf, confidence: conf,
                 });
             }
         }

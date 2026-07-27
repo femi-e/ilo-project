@@ -13,8 +13,8 @@ pub trait Store: Send + Sync {
     async fn get_property(&self, owner_id: &str, key: &str) -> Result<Option<PropRecord>, StoreError>;
     async fn get_all_properties(&self, owner_id: &str) -> Result<Vec<PropRecord>, StoreError>;
     async fn get_link(&self, id: &LinkId) -> Result<Option<LinkRecord>, StoreError>;
-    async fn find_links(&self, from: &NodeId, type_: Option<&LinkType>) -> Result<Vec<LinkRecord>, StoreError>;
-    async fn find_links_to(&self, to: &NodeId, type_: Option<&LinkType>) -> Result<Vec<LinkRecord>, StoreError>;
+    async fn find_links(&self, from: &NodeId, type_: Option<&str>) -> Result<Vec<LinkRecord>, StoreError>;
+    async fn find_links_to(&self, to: &NodeId, type_: Option<&str>) -> Result<Vec<LinkRecord>, StoreError>;
     async fn get_all_links(&self) -> Result<Vec<LinkRecord>, StoreError>;
     async fn traverse(&self, from: &NodeId, filter: &TraversalFilter) -> Result<Vec<(LinkRecord, NodeRecord)>, StoreError>;
     async fn get_tag_index(&self) -> Result<HashMap<String, Vec<NodeId>>, StoreError>;
@@ -31,8 +31,8 @@ impl<T: Store + ?Sized> Store for Box<T> {
     async fn get_property(&self, o: &str, k: &str) -> Result<Option<PropRecord>, StoreError> { (**self).get_property(o, k).await }
     async fn get_all_properties(&self, o: &str) -> Result<Vec<PropRecord>, StoreError> { (**self).get_all_properties(o).await }
     async fn get_link(&self, id: &LinkId) -> Result<Option<LinkRecord>, StoreError> { (**self).get_link(id).await }
-    async fn find_links(&self, f: &NodeId, t: Option<&LinkType>) -> Result<Vec<LinkRecord>, StoreError> { (**self).find_links(f, t).await }
-    async fn find_links_to(&self, t: &NodeId, typ: Option<&LinkType>) -> Result<Vec<LinkRecord>, StoreError> { (**self).find_links_to(t, typ).await }
+    async fn find_links(&self, f: &NodeId, t: Option<&str>) -> Result<Vec<LinkRecord>, StoreError> { (**self).find_links(f, t).await }
+    async fn find_links_to(&self, t: &NodeId, typ: Option<&str>) -> Result<Vec<LinkRecord>, StoreError> { (**self).find_links_to(t, typ).await }
     async fn get_all_links(&self) -> Result<Vec<LinkRecord>, StoreError> { (**self).get_all_links().await }
     async fn traverse(&self, f: &NodeId, fl: &TraversalFilter) -> Result<Vec<(LinkRecord, NodeRecord)>, StoreError> { (**self).traverse(f, fl).await }
     async fn get_tag_index(&self) -> Result<HashMap<String, Vec<NodeId>>, StoreError> { (**self).get_tag_index().await }

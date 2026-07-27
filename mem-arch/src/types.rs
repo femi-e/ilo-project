@@ -22,18 +22,17 @@ impl std::str::FromStr for NodeType {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum LinkType {
-    Relates, Depends, Contradicts, Refutes, Contains, Supports, Mentions, Precedes,
+    Depends, Intends, Implements, Contains, Relates, References, Precedes,
 }
 impl LinkType {
     pub fn as_str(&self) -> &'static str {
         match self {
-            LinkType::Relates => "relates",
             LinkType::Depends => "depends",
-            LinkType::Contradicts => "contradicts",
-            LinkType::Refutes => "refutes",
+            LinkType::Intends => "intends",
+            LinkType::Implements => "implements",
             LinkType::Contains => "contains",
-            LinkType::Supports => "supports",
-            LinkType::Mentions => "mentions",
+            LinkType::Relates => "relates",
+            LinkType::References => "references",
             LinkType::Precedes => "precedes",
         }
     }
@@ -42,13 +41,12 @@ impl std::str::FromStr for LinkType {
     type Err = ();
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "relates" => Ok(LinkType::Relates),
             "depends" => Ok(LinkType::Depends),
-            "contradicts" => Ok(LinkType::Contradicts),
-            "refutes" => Ok(LinkType::Refutes),
+            "intends" => Ok(LinkType::Intends),
+            "implements" => Ok(LinkType::Implements),
             "contains" => Ok(LinkType::Contains),
-            "supports" => Ok(LinkType::Supports),
-            "mentions" => Ok(LinkType::Mentions),
+            "relates" => Ok(LinkType::Relates),
+            "references" => Ok(LinkType::References),
             "precedes" => Ok(LinkType::Precedes),
             _ => Err(()),
         }
@@ -106,7 +104,9 @@ pub struct PropRecord {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LinkRecord {
     pub id: LinkId, pub from: NodeId, pub to: NodeId, pub type_: LinkType,
-    pub tags: Vec<String>, pub weight: f64, pub created_at: chrono::NaiveDateTime,
+    pub relationship: String,
+    pub tags: Vec<String>, pub weight: f64, pub confidence: f64,
+    pub created_at: chrono::NaiveDateTime,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -148,7 +148,7 @@ pub enum StoreMutation {
     CreateNode { id: NodeId, type_: NodeType, tags: Vec<String>, label: String, confidence: f64 },
     SetProperty { owner_id: String, owner_kind: OwnerKind, key: String, value: PropValue },
     DeleteProperty { owner_id: String, key: String },
-    CreateLink { id: LinkId, from: NodeId, to: NodeId, type_: LinkType, tags: Vec<String>, weight: f64 },
+    CreateLink { id: LinkId, from: NodeId, to: NodeId, type_: LinkType, relationship: String, tags: Vec<String>, weight: f64, confidence: f64 },
     UpdateLinkWeight { id: LinkId, weight: f64 },
     DeleteLink { id: LinkId },
     DeleteNode { id: NodeId },
@@ -162,7 +162,7 @@ pub struct NodeQuery {
 
 #[derive(Debug, Clone)]
 pub struct TraversalFilter {
-    pub type_: Option<LinkType>, pub min_weight: f64, pub max_depth: u8,
+    pub type_: Option<String>, pub min_weight: f64, pub max_depth: u8,
 }
 impl Default for TraversalFilter {
     fn default() -> Self { TraversalFilter { type_: None, min_weight: 0.0, max_depth: 3 } }
@@ -221,9 +221,9 @@ mod tests {
 
     #[test]
     fn test_link_type_roundtrip() {
-        for variant in &[LinkType::Relates, LinkType::Depends, LinkType::Contradicts,
-                         LinkType::Refutes, LinkType::Contains, LinkType::Supports,
-                         LinkType::Mentions, LinkType::Precedes] {
+        for variant in &[LinkType::Depends, LinkType::Intends, LinkType::Implements,
+                         LinkType::Contains, LinkType::Relates, LinkType::References,
+                         LinkType::Precedes] {
             let s = variant.as_str();
             let back: Result<LinkType, _> = s.parse();
             assert_eq!(back, Ok(variant.clone()), "roundtrip failed for {variant:?}");

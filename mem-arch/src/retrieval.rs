@@ -451,7 +451,7 @@ mod tests {
         let store = MockStore::new();
         store.add_entity("e_ailo", "Ailo", 0.9, vec![]);
         store.add_entity("e_rust", "Rust", 0.8, vec![]);
-        store.add_link("l1", "e_ailo", "e_rust", LinkType::Relates, 0.8);
+        store.add_link("l1", "e_ailo", "e_rust", LinkType::Relates, "", 0.8, 0.5);
 
         let seeds = vec![Seed { node_id: "e_ailo".into(), match_score: 1.0, label: "Ailo".into() }];
         let result = expand_frontier(&seeds, &store, "Ailo", 4).await.unwrap();
@@ -480,7 +480,7 @@ mod tests {
         // The product confidence*label_sim = 0.8*0.2 = 0.16, so prop = 0.16,
         // well above MIN_SCORE. This is correct: a single weak edge with
         // no competition still propagates.
-        store.add_link("l1", "e_ailo", "e_rust", LinkType::Relates, 0.01);
+        store.add_link("l1", "e_ailo", "e_rust", LinkType::Relates, "", 0.01, 0.5);
 
         let seeds = vec![Seed { node_id: "e_ailo".into(), match_score: 1.0, label: "Ailo".into() }];
         let result = expand_frontier(&seeds, &store, "Ailo", 4).await.unwrap();
@@ -504,7 +504,7 @@ mod tests {
         let tag_idx = HashMap::new();
         store.add_entity("e_ailo", "Ailo", 0.9, vec![]);
         store.add_entity("e_rust", "Rust", 0.8, vec![]);
-        store.add_link("l1", "e_ailo", "e_rust", LinkType::Relates, 0.8);
+        store.add_link("l1", "e_ailo", "e_rust", LinkType::Relates, "", 0.8, 0.5);
 
         let result = retrieve("Ailo", &store, &tag_idx, Some(8000), None, None, None).await.unwrap();
         assert!(!result.activated_nodes.is_empty());

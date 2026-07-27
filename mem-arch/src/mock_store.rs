@@ -37,10 +37,10 @@ impl MockStore {
         });
     }
 
-    pub fn add_link(&self, id: &str, from: &str, to: &str, type_: LinkType, weight: f64) {
+    pub fn add_link(&self, id: &str, from: &str, to: &str, type_: LinkType, relationship: &str, weight: f64, confidence: f64) {
         self.links.lock().unwrap().insert(id.to_string(), LinkRecord {
             id: id.to_string(), from: from.to_string(), to: to.to_string(),
-            type_, tags: vec![], weight,
+            type_, relationship: relationship.to_string(), tags: vec![], weight, confidence,
             created_at: chrono::Utc::now().naive_utc(),
         });
     }
@@ -96,17 +96,17 @@ impl Store for MockStore {
         Ok(self.links.lock().unwrap().get(id).cloned())
     }
 
-    async fn find_links(&self, from: &NodeId, type_: Option<&LinkType>) -> Result<Vec<LinkRecord>, StoreError> {
+    async fn find_links(&self, from: &NodeId, type_: Option<&str>) -> Result<Vec<LinkRecord>, StoreError> {
         let cache = self.links.lock().unwrap();
         Ok(cache.values().filter(|l| {
-            l.from == *from && (type_.is_none_or(|t| l.type_ == *t))
+            l.from == *from && (type_.is_none_or(|t| l.type_.as_str() == t))
         }).cloned().collect())
     }
 
-    async fn find_links_to(&self, to: &NodeId, type_: Option<&LinkType>) -> Result<Vec<LinkRecord>, StoreError> {
+    async fn find_links_to(&self, to: &NodeId, type_: Option<&str>) -> Result<Vec<LinkRecord>, StoreError> {
         let cache = self.links.lock().unwrap();
         Ok(cache.values().filter(|l| {
-            l.to == *to && (type_.is_none_or(|t| l.type_ == *t))
+            l.to == *to && (type_.is_none_or(|t| l.type_.as_str() == t))
         }).cloned().collect())
     }
 

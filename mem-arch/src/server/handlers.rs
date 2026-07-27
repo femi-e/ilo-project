@@ -81,7 +81,8 @@ pub async fn remember(
                         let ctx = uid("ctx");
                         all_mutations.push(StoreMutation::CreateLink {
                             id: ctx, from: turn_id.clone(), to: eid,
-                            type_: LinkType::Mentions, tags: vec![], weight: 0.5,
+                            type_: LinkType::References, relationship: String::new(),
+                            tags: vec![], weight: 0.5, confidence: 0.5,
                         });
                     }
                 }
@@ -93,7 +94,8 @@ pub async fn remember(
             let ctx_link_id = uid("ctx");
             all_mutations.push(StoreMutation::CreateLink {
                 id: ctx_link_id, from: turn_id.clone(), to: eid.clone(),
-                type_: LinkType::Mentions, tags: vec![], weight: 0.5,
+                type_: LinkType::References, relationship: String::new(),
+                tags: vec![], weight: 0.5, confidence: 0.5,
             });
         }
     }
@@ -204,7 +206,8 @@ pub async fn ingest_handler(
     for cid in &claim_ids {
         mutations.push(StoreMutation::CreateLink {
             id: uid("l"), from: source_id.clone(), to: cid.clone(),
-            type_: LinkType::Supports, tags: vec![], weight: 0.7,
+            type_: LinkType::Relates, relationship: String::new(),
+            tags: vec![], weight: 0.7, confidence: 0.7,
         });
     }
 
@@ -310,16 +313,20 @@ pub async fn connect(
     let link_id = uid("l");
     let lt = match req.link_type.as_str() {
         "depends" => LinkType::Depends,
-        "contradicts" => LinkType::Contradicts,
-        "refutes" => LinkType::Refutes,
-        "supports" => LinkType::Supports,
-        "mentions" => LinkType::Mentions,
+        "intends" => LinkType::Intends,
+        "implements" => LinkType::Implements,
         "contains" => LinkType::Contains,
+        "relates" => LinkType::Relates,
+        "references" => LinkType::References,
         "precedes" => LinkType::Precedes,
         _ => LinkType::Relates,
     };
+    let rel_str = req.link_type.clone();
     mutations.push(StoreMutation::CreateLink {
-        id: link_id.clone(), from: from_id, to: to_id, type_: lt, tags: vec![], weight: req.confidence.unwrap_or(0.5),
+        id: link_id.clone(), from: from_id, to: to_id, type_: lt,
+        relationship: rel_str, tags: vec![],
+        weight: req.confidence.unwrap_or(0.5),
+        confidence: req.confidence.unwrap_or(0.5),
     });
     { let mut s = state.store.write().await; let _ = s.write_maintenance(mutations).await; }
     Json(ConnectResp { status: "ok".into(), link_id, entities_affected: affected })
