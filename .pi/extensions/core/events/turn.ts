@@ -79,48 +79,18 @@ export function registerTurnHooks(pi: ExtensionAPI): void {
     }
 
     try {
-      // Step 1: Extract entities and claims from the full turn
-      const fullText = `${userText}\n${responseText}`;
-      const extract = await ilo.extract(fullText);
-      const entityCount = extract.data?.entities?.length || 0;
-      const claimCount = extract.data?.claims?.length || 0;
-
-      // Step 2: Determine which entities were used (learning signal)
-      const usedLabels = (extract.data?.entities || [])
-        .filter((e: any) => responseText.toLowerCase().includes(e.name.toLowerCase()))
-        .map((e: any) => e.name);
-
-      if (usedLabels.length > 0) {
-        await ilo.learn({
-          query: userText,
-          responseText,
-          usedLabels,
-          quality: 0.8,
-        }).catch(() => {});
-      }
-
-      // Step 3: Convert extract output to remember input and store
-      const entitiesIn = (extract.data?.entities || []).map(e => ({
-        label: e.name,
-        tags: e.tags,
-        confidence: e.confidence,
-      }));
-      const claimsIn = (extract.data?.claims || []).map(c => ({
-        content: `${c.subject} ${c.link_type} ${c.object}`,
-        confidence: c.confidence,
-        entities: [c.subject, c.object],
-      }));
+      // Store the turn for conversation history (no entity extraction — 4B model handles that)
       await ilo.remember({
         query: userText,
         response: responseText,
-        entities: entitiesIn,
-        claims: claimsIn,
+        entities: [],
+        claims: [],
         turnIndex: state.turnCount++,
       }).catch(() => {});
 
-      // Notify on memory activity (first few turns)
-      if (state.turnCount <= 3 && (entityCount > 0 || claimCount > 0) && ctx?.ui) {
-        ctx.ui.notify(`Memory: ${entityCount} entities, ${claimCount} claims`, 'info');
+      // Notify on first turn
+      if (state.turnCount <= 2 && ctx?.ui) {
+        ctx.ui.notify('Turn stored in memory', 'info');
       }
     } catch (err) {
       console.error('[ilo-turn] failed:', err);

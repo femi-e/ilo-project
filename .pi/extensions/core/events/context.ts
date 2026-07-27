@@ -65,8 +65,6 @@ function findLatestUserQuery(msgs: any[]): string {
 	return "(unknown)";
 }
 
-
-
 /// Estimate tokens from a messages array.
 function estimateTokens(messages: any[]): number {
 	let total = 0;
@@ -165,8 +163,7 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 						`[context] 4B scored ${msgs.length} chunks, dropped ${toDrop.size}`,
 					);
 				}
-
-				}
+			}
 
 			// Extract entities and claims from the latest user query using 4B model
 			if (_4bAvailable && latestQuery && latestQuery !== "(unknown)") {
@@ -203,8 +200,6 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 					// Non-critical — extraction is best-effort
 				}
 			}
-
-
 
 			// Memory → system role conversion
 			for (const msg of payload.messages) {
