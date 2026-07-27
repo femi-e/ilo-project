@@ -88,10 +88,8 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 	});
 
 	pi.on("context", async (_event: any, _ctx: any) => {
-		// Context event is for non-destructive message inspection.
-		// Actual message filtering and dashboard injection happens in
-		// before_provider_request, where event.payload.messages is the
-		// ACTUAL array sent to the provider and the return IS applied.
+		// Context event is for non-destructive inspection.
+		// Actual work (recall, scoring, extraction) is in before_provider_request.
 	});
 
 	pi.on("before_agent_start", async (event: any, _ctx: any) => {
@@ -105,7 +103,7 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 		}
 	});
 
-	// 4B model context scoring + entity extraction
+		// 4B model context scoring + memory recall + entity extraction
 	pi.on("before_provider_request", async (event: any, _ctx: any) => {
 		const payload = event.payload;
 		const msgs = payload?.messages;
@@ -115,8 +113,37 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 			const BUDGET = 80000;
 			const latestQuery = findLatestUserQuery(msgs);
 
+			// Recall relevant memory from ILO and inject as memory message
+			if (latestQuery && latestQuery !== "(unknown)") {
+				try {
+					const memoryContext = await ilo.recall(latestQuery);
+					if (
+						memoryContext.ok &&
+						memoryContext.data?.context &&
+						memoryContext.data.nodes > 0
+					) {
+						// Inject as memory message right before the last user message
+						const memoryMsg = {
+							role: "memory",
+							content: memoryContext.data.context,
+							customType: "ilo_memory",
+						};
+						// Insert before the last message (which should be the user query)
+						payload.messages.splice(msgs.length - 1, 0, memoryMsg);
+						console.error(
+							`[context] Injected ${memoryContext.data.nodes} memory nodes from ILO`,
+						);
+					}
+				} catch {
+					// Non-critical — proceed without memory recall
+				}
+			}
+
+			// Re-read messages after potential memory injection
+			const updatedMsgs = payload.messages;
+
 			// Build chunk info for scoring
-			const chunkInfo = msgs.map((m: any) => ({
+			const chunkInfo = updatedMsgs.map((m: any) => ({
 				role: m.role || m.customType || "?",
 				preview: extractPreview(m),
 			}));
@@ -142,10 +169,15 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 					score: s,
 				}));
 
-				// Always keep: last user query + last assistant response
+				// Always keep: last message (user query) + last assistant response
 				const alwaysKeep = new Set<number>();
-				alwaysKeep.add(msgs.length - 1);
-				if (msgs.length >= 2) alwaysKeep.add(msgs.length - 2);
+				alwaysKeep.add(updatedMsgs.length - 1);
+				for (let i = updatedMsgs.length - 2; i >= 0; i--) {
+					if (updatedMsgs[i].role === "assistant") {
+						alwaysKeep.add(i);
+						break;
+					}
+				}
 
 				const droppable = scored
 					.filter((s) => !alwaysKeep.has(s.idx) && s.score < 0.5)
@@ -155,14 +187,18 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 				for (const s of droppable) {
 					if (alwaysKeep.has(s.idx)) continue;
 					toDrop.add(s.idx);
-					const remaining = msgs.filter((_: any, i: number) => !toDrop.has(i));
+					const remaining = updatedMsgs.filter(
+						(_: any, i: number) => !toDrop.has(i),
+					);
 					if (estimateTokens(remaining) <= BUDGET) break;
 				}
 
 				if (toDrop.size > 0) {
-					payload.messages = msgs.filter((_: any, i: number) => !toDrop.has(i));
+					payload.messages = updatedMsgs.filter(
+						(_: any, i: number) => !toDrop.has(i),
+					);
 					console.error(
-						`[context] 4B scored ${msgs.length} chunks, dropped ${toDrop.size}`,
+						`[context] 4B scored ${updatedMsgs.length} chunks, dropped ${toDrop.size}`,
 					);
 				}
 			}
@@ -171,7 +207,7 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 			if (_4bAvailable && latestQuery && latestQuery !== "(unknown)") {
 				try {
 					const result = await analyzeWith4BModel(latestQuery, {
-						contextSummary: `Session has ${msgs.length} chunks (~${estimateTokens(msgs)} tokens)`,
+						contextSummary: `Session has ${updatedMsgs.length} chunks (~${estimateTokens(updatedMsgs)} tokens)`,
 					});
 					if (
 						result &&
@@ -179,9 +215,8 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 							result.extracted_claims.length > 0)
 					) {
 						// Store entity labels for turn_end learning signal
-						(globalThis as any).__lastExtractedLabels = result.extracted_entities.map(
-							(e: any) => e.name,
-						);
+						(globalThis as any).__lastExtractedLabels =
+							result.extracted_entities.map((e: any) => e.name);
 
 						await ilo
 							.remember({
