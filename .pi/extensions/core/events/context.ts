@@ -85,6 +85,7 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 		SYSTEM_INJECTED = false;
 		_4bAvailable = false;
 		_4bChecked = false;
+		_pipelineRanForQuery = null;
 	});
 
 	pi.on("context", async (_event: any, _ctx: any) => {
@@ -103,156 +104,148 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 		}
 	});
 
+	// ── Turn-scoped guard ─────────────────────────────────────
+	// before_provider_request fires for EVERY LLM call (including sub-requests
+	// during tool execution). The expensive pipeline (recall, score, extract)
+	// should only run once per user turn — everything after the first call
+	// only needs the memory→system role conversion.
+	//
+	// We track the last user query to detect new turns vs sub-requests.
+	let _pipelineRanForQuery: string | null = null;
+
 	// 4B model context scoring + memory recall + entity extraction
 	pi.on("before_provider_request", async (event: any, _ctx: any) => {
 		const payload = event.payload;
 		const msgs = payload?.messages;
 		if (!msgs || msgs.length === 0) return;
 
-		try {
-			const BUDGET = 80000;
-			const latestQuery = findLatestUserQuery(msgs);
+		const latestQuery = findLatestUserQuery(msgs);
+		const isNewTurn = latestQuery && latestQuery !== "(unknown)" &&
+			latestQuery !== _pipelineRanForQuery;
 
-			// Recall relevant memory from ILO and inject as memory message
-			if (latestQuery && latestQuery !== "(unknown)") {
-				try {
-					const memoryContext = await ilo.recall(latestQuery);
-					if (
-						memoryContext.ok &&
-						memoryContext.data?.context &&
-						memoryContext.data.nodes > 0
-					) {
-						// Inject as memory message right before the last user message
-						const memoryMsg = {
-							role: "memory",
-							content: memoryContext.data.context,
-							customType: "ilo_memory",
-						};
-						// Insert before the last message (which should be the user query)
-						payload.messages.splice(msgs.length - 1, 0, memoryMsg);
-						console.error(
-							`[context] Injected ${memoryContext.data.nodes} memory nodes from ILO`,
-						);
+		if (isNewTurn) {
+			_pipelineRanForQuery = latestQuery;
+
+			try {
+				const BUDGET = 80000;
+
+				// ── Step 1: Recall ──
+				if (latestQuery !== "(unknown)") {
+					try {
+						const memoryContext = await ilo.recall(latestQuery);
+						if (
+							memoryContext.ok &&
+							memoryContext.data?.context &&
+							memoryContext.data.nodes > 0
+						) {
+							const memoryMsg = {
+								role: "memory",
+								content: memoryContext.data.context,
+								customType: "ilo_memory",
+							};
+							payload.messages.splice(msgs.length - 1, 0, memoryMsg);
+						}
+					} catch {
+						// Non-critical — proceed without memory recall
 					}
-				} catch {
-					// Non-critical — proceed without memory recall
 				}
-			}
 
-			// Re-read messages after potential memory injection
-			const updatedMsgs = payload.messages;
+				const updatedMsgs = payload.messages;
 
-			// Build chunk info for scoring
-			const chunkInfo = updatedMsgs.map((m: any) => ({
-				role: m.role || m.customType || "?",
-				preview: extractPreview(m),
-			}));
-
-			// Check 4B model availability (lazy, once per session)
-			if (!_4bChecked) {
-				_4bAvailable = await is4BModelAvailable();
-				_4bChecked = true;
-				if (_4bAvailable) {
-					console.error("[context] 4B context-rebuild model available");
-				}
-			}
-
-			// Score chunks with 4B model
-			const modelScores = _4bAvailable
-				? await scoreChunksWith4BModel(chunkInfo, latestQuery)
-				: null;
-
-			if (modelScores) {
-				type Scored = { idx: number; score: number };
-				const scored: Scored[] = modelScores.map((s, i) => ({
-					idx: i,
-					score: s,
+				// ── Step 2: Score + evict ──
+				const chunkInfo = updatedMsgs.map((m: any) => ({
+					role: m.role || m.customType || "?",
+					preview: extractPreview(m),
 				}));
 
-				// Always keep: last message (user query) + last assistant response
-				const alwaysKeep = new Set<number>();
-				alwaysKeep.add(updatedMsgs.length - 1);
-				for (let i = updatedMsgs.length - 2; i >= 0; i--) {
-					if (updatedMsgs[i].role === "assistant") {
-						alwaysKeep.add(i);
-						break;
-					}
+				if (!_4bChecked) {
+					_4bAvailable = await is4BModelAvailable();
+					_4bChecked = true;
 				}
 
-				const droppable = scored
-					.filter((s) => !alwaysKeep.has(s.idx) && s.score < 0.5)
-					.sort((a, b) => a.score - b.score);
+				const modelScores = _4bAvailable
+					? await scoreChunksWith4BModel(chunkInfo, latestQuery)
+					: null;
 
-				const toDrop = new Set<number>();
-				for (const s of droppable) {
-					if (alwaysKeep.has(s.idx)) continue;
-					toDrop.add(s.idx);
-					const remaining = updatedMsgs.filter(
-						(_: any, i: number) => !toDrop.has(i),
-					);
-					if (estimateTokens(remaining) <= BUDGET) break;
-				}
-
-				if (toDrop.size > 0) {
-					payload.messages = updatedMsgs.filter(
-						(_: any, i: number) => !toDrop.has(i),
-					);
-					console.error(
-						`[context] 4B scored ${updatedMsgs.length} chunks, dropped ${toDrop.size}`,
-					);
-				}
-			}
-
-			// Extract entities and claims from the latest user query using 4B model
-			if (_4bAvailable && latestQuery && latestQuery !== "(unknown)") {
-				try {
-					const result = await analyzeWith4BModel(latestQuery, {
-						contextSummary: `Session has ${updatedMsgs.length} chunks (~${estimateTokens(updatedMsgs)} tokens)`,
-					});
-					if (result) {
-						// Save labels + claims for turn_end to use in a single atomic write
-						(globalThis as any).__pendingEntityLabels =
-							result.extracted_entities.map((e: any) => e.name);
-						(globalThis as any).__pendingClaimInputs =
-							result.extracted_claims.map((c: any) => ({
-								content: `${c.subject} ${c.relationship} ${c.object}`,
-								confidence: c.confidence,
-								entities: [c.subject, c.object],
-								relationship: c.relationship,
-								category: c.category,
-							}));
-
-						// Store entity nodes eagerly so they're findable by recall
-						// during the current turn (no turn created here)
-						const entityInputs = result.extracted_entities.map((e: any) => ({
-							label: e.name,
-							tags: [...(e.tags || []), e.type],
-							confidence: e.confidence,
-						}));
-						if (entityInputs.length > 0) {
-							await ilo.createEntities(entityInputs).catch(() => {});
+				if (modelScores) {
+					const scored = modelScores.map((s, i) => ({ idx: i, score: s }));
+					const alwaysKeep = new Set<number>();
+					alwaysKeep.add(updatedMsgs.length - 1);
+					for (let i = updatedMsgs.length - 2; i >= 0; i--) {
+						if (updatedMsgs[i].role === "assistant") {
+							alwaysKeep.add(i);
+							break;
 						}
-
-						// Also keep old name for backward compat (used by turn.ts learn)
-						(globalThis as any).__lastExtractedLabels =
-							result.extracted_entities.map((e: any) => e.name);
 					}
-				} catch {
-					// Non-critical — extraction is best-effort
+
+					const droppable = scored
+						.filter((s) => !alwaysKeep.has(s.idx) && s.score < 0.5)
+						.sort((a, b) => a.score - b.score);
+
+					const toDrop = new Set<number>();
+					for (const s of droppable) {
+						if (alwaysKeep.has(s.idx)) continue;
+						toDrop.add(s.idx);
+						const remaining = updatedMsgs.filter(
+							(_: any, i: number) => !toDrop.has(i),
+						);
+						if (estimateTokens(remaining) <= BUDGET) break;
+					}
+
+					if (toDrop.size > 0) {
+						payload.messages = updatedMsgs.filter(
+							(_: any, i: number) => !toDrop.has(i),
+						);
+					}
+				}
+
+				// ── Step 3: Extract entities + claims ──
+				if (_4bAvailable && latestQuery !== "(unknown)") {
+					try {
+						const result = await analyzeWith4BModel(latestQuery, {
+							contextSummary: `Session has ${updatedMsgs.length} chunks (~${estimateTokens(updatedMsgs)} tokens)`,
+						});
+						if (result) {
+							(globalThis as any).__pendingEntityLabels =
+								result.extracted_entities.map((e: any) => e.name);
+							(globalThis as any).__pendingClaimInputs =
+								result.extracted_claims.map((c: any) => ({
+									content: `${c.subject} ${c.relationship} ${c.object}`,
+									confidence: c.confidence,
+									entities: [c.subject, c.object],
+									relationship: c.relationship,
+									category: c.category,
+								}));
+
+							const entityInputs = result.extracted_entities.map((e: any) => ({
+								label: e.name,
+								tags: [...(e.tags || []), e.type],
+								confidence: e.confidence,
+							}));
+							if (entityInputs.length > 0) {
+								await ilo.createEntities(entityInputs).catch(() => {});
+							}
+
+							(globalThis as any).__lastExtractedLabels =
+								result.extracted_entities.map((e: any) => e.name);
+						}
+					} catch {
+						// Non-critical — extraction is best-effort
+					}
+				}
+			} catch (e) {
+				console.warn("[context] context rebuild failed:", e);
+			}
+		}
+
+		// Memory → system role conversion (ALWAYS runs, even on sub-requests)
+		for (const msg of payload.messages) {
+			if (msg.role === "memory") {
+				msg.role = "system";
+				if (msg.content && !msg.content.startsWith("[Memory Context]")) {
+					msg.content = `[Memory Context]\n${msg.content}`;
 				}
 			}
-
-			// Memory → system role conversion
-			for (const msg of payload.messages) {
-				if (msg.role === "memory") {
-					msg.role = "system";
-					if (msg.content && !msg.content.startsWith("[Memory Context]")) {
-						msg.content = `[Memory Context]\n${msg.content}`;
-					}
-				}
-			}
-		} catch (e) {
-			console.warn("[context] context rebuild failed:", e);
 		}
 
 		return payload;

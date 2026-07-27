@@ -5,10 +5,10 @@ edition = "2021"
 description = "ILO: Cognitive memory runtime for coding agents — persistent graph memory with FTS/vector retrieval, PPR graph traversal, and Hebbian learning"
 
 [profile.release]
-opt-level = 3          # max speed
-lto = "fat"           # cross-crate LTO (smaller + faster)
-strip = "symbols"     # strip debug symbols
-codegen-units = 1      # single codegen unit for max LTO
+opt-level = 3     # max speed
+lto = "fat"       # cross-crate LTO (smaller + faster)
+strip = "symbols" # strip debug symbols
+codegen-units = 1 # single codegen unit for max LTO
 
 [lib]
 name = "mem_arch"
