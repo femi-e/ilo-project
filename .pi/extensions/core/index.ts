@@ -19,6 +19,7 @@ import { registerIloTools } from './lib/ilo-tools';
 // import { registerWebScrapeTool } from './tools/web-scrape';
 // import { registerWebCrawlTool } from './tools/web-crawl';
 import { registerTaskTool } from './tools/task';
+import { registerContextRebuildTool } from './tools/context-rebuild';
 import { registerDiagnosticsTool } from './tools/diagnostics';
 import { LOCAL_CHAT_PORT_START, LOCAL_CHAT_PORT_END, LOCAL_EMBED_PORT } from './lib/constants';
 
@@ -36,6 +37,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   // registerWebCrawlTool(pi);
   registerTaskTool(pi);
   registerDiagnosticsTool(pi);
+  registerContextRebuildTool(pi);
 
   // ── Register local inference servers as pi providers ───
   const providerInfo = await registerMistralProvider(pi);
@@ -109,8 +111,6 @@ async function registerMistralProvider(pi: ExtensionAPI): Promise<{ embed: strin
         console.error(`[local] Discovered model "${m.id}" on :${port}`);
       }
     } catch {
-      // Port not running a compatible server — skip
-      continue;
     }
   }
 
