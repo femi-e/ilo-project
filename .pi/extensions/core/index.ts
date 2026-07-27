@@ -159,6 +159,8 @@ async function registerMistralProvider(pi: ExtensionAPI): Promise<{ embed: strin
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         contextWindow: 262144,
         maxTokens: 32768,
+        // Qwen models need thinking disabled for reliable tool calling
+        chatTemplateKwargs: { enable_thinking: false },
       })),
     });
 
