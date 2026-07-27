@@ -83,6 +83,8 @@ function estimateTokens(messages: any[]): number {
 export function registerContextHooks(pi: ExtensionAPI): void {
 	pi.on("session_start", () => {
 		SYSTEM_INJECTED = false;
+		_4bAvailable = false;
+		_4bChecked = false;
 	});
 
 	pi.on("context", async (_event: any, _ctx: any) => {
@@ -103,7 +105,7 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 		}
 	});
 
-	// 4B model context scoring + entity extraction + dashboard
+	// 4B model context scoring + entity extraction
 	pi.on("before_provider_request", async (event: any, _ctx: any) => {
 		const payload = event.payload;
 		const msgs = payload?.messages;
