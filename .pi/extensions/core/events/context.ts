@@ -103,7 +103,7 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 		}
 	});
 
-		// 4B model context scoring + memory recall + entity extraction
+	// 4B model context scoring + memory recall + entity extraction
 	pi.on("before_provider_request", async (event: any, _ctx: any) => {
 		const payload = event.payload;
 		const msgs = payload?.messages;

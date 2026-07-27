@@ -32,7 +32,9 @@ pub async fn build_entity_mutations(
         let (eid, is_new) = match resolve_entity(store, &ent.label).await {
             Some(existing_id) => (existing_id, false),
             None => {
-                let new_id = format!("e_{}", label_lower.replace(' ', "_"));
+                // Use UUID-based ID to avoid race conditions where two concurrent
+                // requests try to create the same entity simultaneously.
+                let new_id = uid("e");
                 (new_id, true)
             },
         };
@@ -95,7 +97,9 @@ pub async fn build_claim_mutations(
                             entity_ids.insert(ref_lower.clone(), existing_id);
                         },
                         None => {
-                            let new_eid = format!("e_{}", ref_lower.replace(' ', "_"));
+                            // Use UUID-based ID to avoid race conditions where two
+                            // concurrent requests create the same claim-referenced entity.
+                            let new_eid = uid("e");
                             entity_ids.insert(ref_lower.clone(), new_eid.clone());
                             mutations.push(StoreMutation::CreateNode {
                                 id: new_eid.clone(), type_: NodeType::Entity,

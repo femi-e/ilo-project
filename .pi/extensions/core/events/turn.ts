@@ -94,23 +94,18 @@ export function registerTurnHooks(pi: ExtensionAPI): void {
 				})
 				.catch(() => {});
 
-			// Learning signal: check which 4B-extracted entities appear in the response
+			// Learning signal: all 4B-extracted entities are relevant to the query
 			const extractedLabels: string[] =
 				(globalThis as any).__lastExtractedLabels || [];
 			if (extractedLabels.length > 0) {
-				const usedLabels = extractedLabels.filter((name: string) =>
-					responseText.toLowerCase().includes(name.toLowerCase()),
-				);
-				if (usedLabels.length > 0) {
-					await ilo
-						.learn({
-							query: userText,
-							responseText,
-							usedLabels,
-							quality: 0.8,
-						})
-						.catch(() => {});
-				}
+				await ilo
+					.learn({
+						query: userText,
+						responseText,
+						usedLabels: extractedLabels,
+						quality: 0.8,
+					})
+					.catch(() => {});
 			}
 
 			// Notify on first turn

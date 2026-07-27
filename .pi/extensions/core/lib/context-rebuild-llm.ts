@@ -21,8 +21,13 @@ const _4B_PORT = parseInt(
 	10,
 );
 const _4B_BASE = `http://127.0.0.1:${_4B_PORT}/v1/chat/completions`;
-const _4B_MODEL = process.env.ILO_4B_MODEL || "default";
 const _4B_TIMEOUT = parseInt(process.env.ILO_4B_TIMEOUT || "15000", 10);
+
+// ── 4B model ID: auto-detected from /v1/models, with env override fallback ──
+let _4bModelId: string | null = null;
+function getModelId(): string {
+	return _4bModelId || process.env.ILO_4B_MODEL || "default";
+}
 
 // ── Output types ─────────────────────────────────────────────
 
@@ -180,7 +185,7 @@ async function call4BModel(
 	const userMsg = { role: "user" as const, content: userPrompt };
 
 	const body = {
-		model: _4B_MODEL,
+		model: getModelId(),
 		messages: [systemMsg, userMsg],
 		temperature: 0.1,
 		max_tokens: 2048,
@@ -384,7 +389,7 @@ ${chunkSummary}`;
 				? combineAbortSignals(signal, AbortSignal.timeout(_4B_TIMEOUT))
 				: AbortSignal.timeout(_4B_TIMEOUT),
 			body: JSON.stringify({
-				model: _4B_MODEL,
+				model: getModelId(),
 				messages: [{ role: "user", content: userPrompt }],
 				temperature: 0.1,
 				max_tokens: 2048,
@@ -449,7 +454,13 @@ export async function is4BModelAvailable(): Promise<boolean> {
 		const res = await fetch(`http://127.0.0.1:${_4B_PORT}/v1/models`, {
 			signal: AbortSignal.timeout(2000),
 		});
-		return res.ok;
+		if (!res.ok) return false;
+		// Capture the actual model ID from the server to avoid "default" fragility
+		const data = (await res.json()) as { data?: Array<{ id: string }> };
+		if (data?.data?.[0]?.id) {
+			_4bModelId = data.data[0].id;
+		}
+		return true;
 	} catch {
 		return false;
 	}

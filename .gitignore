@@ -3,8 +3,10 @@ target/
 *.lbug.wal
 *.sock
 var/
+mem-arch/var/
 .dev/
 node_modules/
 __pycache__/
 *.pyc
 .DS_Store
+Qwen3.6-35B-A3B-MTPLX-Optimized-Speed/

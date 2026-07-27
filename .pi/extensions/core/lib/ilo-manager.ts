@@ -61,7 +61,6 @@ const ILO_BINARY =
 const ILO_PORT = process.env.ILO_PORT || "18090";
 const ILO_DB_PATH =
 	process.env.ILO_DB_PATH || path.join(EXT_VAR_DIR, "ilo_data.lbug");
-const ILO_MAX_UPTIME = process.env.ILO_MAX_UPTIME || "45";
 const MAX_RESTARTS = 3;
 
 const LLAMA_SERVER_BINARY = process.env.LLAMA_SERVER_BINARY || "llama-server";
@@ -211,7 +210,6 @@ export async function startIlo(): Promise<boolean> {
 			...process.env,
 			ILO_PORT,
 			ILO_DB_PATH,
-			ILO_MAX_UPTIME: "0",
 			RUST_LOG: process.env.RUST_LOG || "info",
 		},
 		cwd: path.dirname(ILO_BINARY),

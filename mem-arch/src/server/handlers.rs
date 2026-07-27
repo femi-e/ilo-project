@@ -16,17 +16,6 @@ use super::helpers::{resolve_entity, build_entity_mutations, build_claim_mutatio
 
 // ─── /status ────────────────────────────────────────────
 
-#[allow(dead_code)]
-pub async fn status(Extension(state): Extension<Arc<AppState>>) -> Json<serde_json::Value> {
-    let db_ok = state.store.read().await.get_tag_index().await.is_ok();
-    Json(serde_json::json!({
-        "status": if db_ok { "ok" } else { "degraded" },
-        "version": "0.1.0",
-        "db_connected": db_ok,
-        "uptime_secs": super::router::START_TIME.elapsed().as_secs(),
-    }))
-}
-
 // ─── /remember ──────────────────────────────────────────
 
 pub async fn remember(
@@ -181,9 +170,9 @@ pub async fn ingest_handler(
     let tags = req.tags.unwrap_or_default();
     let mut entity_ids: std::collections::HashMap<String, String> = std::collections::HashMap::new();
 
-    // Create source entity
+    // Create source entity with UUID-based ID to avoid duplicate key races
     let source_key = req.source.to_lowercase();
-    let source_id = format!("e_{}", source_key.replace(|c: char| !c.is_alphanumeric() && c != '_', "_"));
+    let source_id = uid("e");
     let mut mutations = vec![StoreMutation::CreateNode {
         id: source_id.clone(), type_: NodeType::Entity,
         tags: vec!["ingested".into()].into_iter().chain(tags.iter().cloned()).collect(),
@@ -288,7 +277,7 @@ pub async fn connect(
         let store = state.store.read().await;
         match resolve_entity(&store, &req.from).await {
             Some(id) => id,
-            None => { let eid = format!("e_{}", fl.replace(' ', "_")); affected.push(fl.clone()); eid }
+            None => { let eid = uid("e"); affected.push(fl.clone()); eid }
         }
     };
     let tl = req.to.to_lowercase();
@@ -296,7 +285,7 @@ pub async fn connect(
         let store = state.store.read().await;
         match resolve_entity(&store, &req.to).await {
             Some(id) => id,
-            None => { let eid = format!("e_{}", tl.replace(' ', "_")); affected.push(tl.clone()); eid }
+            None => { let eid = uid("e"); affected.push(tl.clone()); eid }
         }
     };
 
@@ -343,7 +332,7 @@ pub async fn entity_update(
         let store = state.store.read().await;
         match resolve_entity(&store, name).await {
             Some(id) => (id, false),
-            None => (format!("e_{}", name.to_lowercase().replace(' ', "_")), true),
+            None => (uid("e"), true),
         }
     };
     let mut mutations = Vec::new();
