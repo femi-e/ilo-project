@@ -83,40 +83,18 @@ export function registerTurnHooks(pi: ExtensionAPI): void {
 		}
 
 		try {
-			// Collect entities + claims extracted by 4B model in context.ts
-			const pendingEntityLabels: string[] =
-				(globalThis as any).__pendingEntityLabels || [];
-			const pendingClaimInputs: any[] =
-				(globalThis as any).__pendingClaimInputs || [];
-			// Also check old key for backward compat during transition
-			const fallbackLabels: string[] =
-				(globalThis as any).__lastExtractedLabels || [];
-			const allLabels =
-				pendingEntityLabels.length > 0 ? pendingEntityLabels : fallbackLabels;
-
-			// Single atomic write: turn + claims + entity links
+			// The agent stores entities/claims proactively via memory_extract tool.
+			// Here we just store the turn record itself.
 			await ilo
 				.remember({
 					query: userText,
 					response: responseText,
 					entities: [],
-					claims: pendingClaimInputs,
-					allEntities: allLabels,
+					claims: [],
+					allEntities: [],
 					turnIndex: state.turnCount++,
 				})
 				.catch(() => {});
-
-			// Learning signal: all extracted entities are relevant to the query
-			if (allLabels.length > 0) {
-				await ilo
-					.learn({
-						query: userText,
-						responseText,
-						usedLabels: allLabels,
-						quality: 0.8,
-					})
-					.catch(() => {});
-			}
 
 			// Notify on first turn
 			if (state.turnCount <= 2 && ctx?.ui) {

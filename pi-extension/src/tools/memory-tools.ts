@@ -405,6 +405,176 @@ export function registerIloTools(api: ExtensionAPI): void {
 	});
 
 	// ═══════════════════════════════════════════════════════════════
+	// MEMORY EXTRACTION TOOL — agent passes entities/claims directly
+	// ═══════════════════════════════════════════════════════════════
+	// The 35B agent already processed the conversation to call this tool,
+	// so it passes the entities/claims it identified directly in the params.
+	// No extra LLM call — this just stores what the agent found.
+	// ═══════════════════════════════════════════════════════════════
+
+	api.registerTool({
+		name: "memory_extract",
+		label: "Memory Extract",
+		description:
+			"Store entities and claims in persistent memory. " +
+			"Call this when the user introduces new concepts, projects, people, tools, " +
+			"or relationships that should be remembered across sessions. " +
+			"Entities are things (people, projects, tools, concepts). " +
+			"Claims are relationships between entities (e.g., X depends on Y, X implements Y). " +
+			"Identify the entities and claims from the conversation and pass them directly.",
+		promptSnippet:
+			"Store entities and claims from the conversation in persistent memory",
+		promptGuidelines: [
+			"Call memory_extract when the user introduces new information: names, projects, tools, relationships, preferences, or decisions.",
+			"Identify the entities (people, projects, tools, concepts) and claims (relationships between them) from the conversation.",
+			"Pass them directly in the parameters — the tool just stores what you found, no extra LLM call.",
+			"Be precise: only include entities and claims that are clearly present in the conversation.",
+			"Confidence: 0.9+ for direct explicit statements, 0.5-0.8 for strong implications.",
+		],
+		parameters: Type.Object({
+			entities: Type.Array(
+				Type.Object({
+					name: Type.String({
+						description:
+							"Entity name — the exact label for this thing (person, project, tool, concept, etc.)",
+					}),
+					type: Type.Optional(
+						Type.String({
+							description:
+								"Entity type: concept | person | project | tool | file | library | service | config | task | other",
+						}),
+					),
+					confidence: Type.Optional(
+						Type.Number({
+							description:
+								"Confidence 0.0-1.0 (0.9+ direct mention, 0.5-0.8 strong implication)",
+						}),
+					),
+					tags: Type.Optional(
+						Type.Array(Type.String(), {
+							description: "Optional tags to categorize this entity",
+						}),
+					),
+				}),
+				{
+					description:
+						"Entities to store — things (people, projects, tools, concepts) mentioned in the conversation",
+					minItems: 1,
+				},
+			),
+			claims: Type.Optional(
+				Type.Array(
+					Type.Object({
+						subject: Type.String({
+							description:
+								"Subject entity name — must also be in the entities list",
+						}),
+						relationship: Type.String({
+							description:
+								"Relationship verb, e.g. 'depends_on', 'implements', 'contains', 'relates_to'",
+						}),
+						object: Type.String({
+							description:
+								"Object entity name — must also be in the entities list",
+						}),
+						category: Type.Optional(
+							Type.String({
+								description:
+									"Category: Depends | Intends | Implements | Contains | Relates | References | Precedes",
+							}),
+						),
+						confidence: Type.Optional(
+							Type.Number({
+								description: "Confidence 0.0-1.0",
+							}),
+						),
+					}),
+					{
+						description:
+							"Optional claims (relationships between entities) to store",
+					},
+				),
+			),
+		}),
+		execute: async (_id, params) => {
+			const entities: any[] = (params as any).entities || [];
+			const claims: any[] = (params as any).claims || [];
+
+			if (entities.length === 0) {
+				return {
+					content: [
+						{ type: "text", text: "No entities provided. Nothing stored." },
+					],
+					details: {} as any,
+				};
+			}
+
+			let entitiesCreated = 0;
+			let claimsCreated = 0;
+
+			// Store entities
+			const entityInputs = entities
+				.map((e: any) => ({
+					label: String(e.name || "").trim(),
+					tags: [
+						...(e.tags || []),
+						...(e.type ? [String(e.type)] : []),
+					],
+					confidence: Math.max(
+						0,
+						Math.min(1, Number(e.confidence) || 0.5),
+					),
+				}))
+				.filter((e: any) => e.label.length > 0);
+
+			if (entityInputs.length > 0) {
+				const created = await ilo
+					.createEntities(entityInputs)
+					.catch(() => null);
+				entitiesCreated = created?.data?.count || 0;
+			}
+
+			// Store claims
+			const validClaims = claims.filter(
+				(c: any) => c.subject && c.relationship && c.object,
+			);
+			if (validClaims.length > 0) {
+				const claimInputs = validClaims.map((c: any) => ({
+					content: `${c.subject} ${c.relationship} ${c.object}`,
+					confidence: Math.max(
+						0,
+						Math.min(1, Number(c.confidence) || 0.5),
+					),
+					entities: [c.subject, c.object],
+				}));
+				const created = await ilo
+					.createClaims(claimInputs)
+					.catch(() => null);
+				claimsCreated = created?.data?.count || 0;
+			}
+
+			const entitySummary = entityInputs
+				.map((e: any) => e.label)
+				.join(", ");
+
+			return {
+				content: [
+					{
+						type: "text",
+						text: `Stored ${entitiesCreated} entities and ${claimsCreated} claims.\nEntities: ${entitySummary || "none"}`,
+					},
+				],
+				details: {
+					entities_extracted: entities.length,
+					entities_created: entitiesCreated,
+					claims_created: claimsCreated,
+				} as any,
+			};
+		},
+	});
+				
+
+	// ═══════════════════════════════════════════════════════════════
 	// WEB TOOLS — internet access
 	// ═══════════════════════════════════════════════════════════════
 	// (web_search, web_scrape, web_crawl are registered in tools/*.ts)

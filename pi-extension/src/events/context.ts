@@ -13,7 +13,6 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { recallMemory } from "../pipeline/recall";
-import { extractAndStore } from "../pipeline/extract-and-store";
 import { convertMemoryRoles } from "../pipeline/convert";
 
 let SYSTEM_INJECTED = false;
@@ -53,6 +52,7 @@ Memory tools:
 - \`memory_store\` — Explicitly save an important fact or insight.
 - \`entity_lookup\` — Get full details on a specific entity.
 - \`entity_connect\` — Link two related concepts.
+- \`memory_extract\` — Proactively extract entities and claims from conversation and store them. Call this when you notice new information worth saving.
 
 # Context Window
 The context window is managed automatically. Old or irrelevant context is evicted to keep you focused. Memory entries compete with conversation turns for space. If you need information from earlier, use \`memory_search\`. Entities and claims survive eviction.
@@ -109,11 +109,9 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 			// Step 1: Recall memory from ILO (cheap graph queries, always runs)
 			await recallMemory(msgs, latestQuery);
 
-			// Step 2: Extract entities + claims from last turn, store with consolidation
-			// (background — never blocks the response)
-			extractAndStore(latestQuery, msgs).catch((err) =>
-				console.error("[extract] Background extraction failed:", err),
-			);
+			// Step 2: Extraction is now handled by the agent via the memory_extract tool
+			// The 35B agent calls memory_extract proactively when it notices new information.
+			// This replaces the old 4B model background pipeline.
 		}
 
 		// Step 4: Memory → system role conversion (ALWAYS runs)
