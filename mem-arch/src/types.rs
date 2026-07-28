@@ -4,6 +4,10 @@ pub type NodeId = String;
 pub type LinkId = String;
 pub type PropId = String;
 
+/// Default embedding dimension (bge-base-en-v1.5).
+/// Change this constant when switching to a different embedding model.
+pub const EMBEDDING_DIM: usize = 768;
+
 /// Macro: enum + `as_str()` + `FromStr` from explicit variant→string mappings.
 /// Usage: NodeType { Entity => "entity", Claim => "claim", ... }
 macro_rules! string_enum {

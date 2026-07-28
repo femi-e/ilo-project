@@ -79,9 +79,9 @@ impl LadybugStore {
         let _ = c.query("LOAD fts");
         let _ = c.query("INSTALL vector");
         let _ = c.query("LOAD vector");
-        c.query("CREATE NODE TABLE IF NOT EXISTS Node (id STRING PRIMARY KEY, type STRING, tags STRING[], label STRING, embedding FLOAT[768], confidence DOUBLE DEFAULT 0.0, created_at TIMESTAMP DEFAULT current_timestamp(), updated_at TIMESTAMP DEFAULT current_timestamp())")?;
-        c.query("CREATE NODE TABLE IF NOT EXISTS Prop (id STRING PRIMARY KEY, owner_id STRING, owner_kind STRING, key STRING, kind STRING, val_str STRING, val_float DOUBLE, val_int INT64, val_bool BOOLEAN, val_json JSON, created_at TIMESTAMP DEFAULT current_timestamp(), updated_at TIMESTAMP DEFAULT current_timestamp())")?;
-        c.query("CREATE REL TABLE IF NOT EXISTS LINK (FROM Node TO Node, id STRING PRIMARY KEY, type STRING, rel STRING DEFAULT '', tags STRING[], weight DOUBLE DEFAULT 0.0, confidence DOUBLE DEFAULT 0.0, created_at TIMESTAMP DEFAULT current_timestamp())")?;
+        c.query("CREATE NODE TABLE IF NOT EXISTS Node (id STRING PRIMARY KEY, type STRING, tags STRING[], label STRING, embedding FLOAT[768], confidence DOUBLE DEFAULT 0.0, created_at INT64 DEFAULT 0, updated_at INT64 DEFAULT 0)")?;
+        c.query("CREATE NODE TABLE IF NOT EXISTS Prop (id STRING PRIMARY KEY, owner_id STRING, owner_kind STRING, key STRING, kind STRING, val_str STRING, val_float DOUBLE, val_int INT64, val_bool BOOLEAN, val_json JSON, created_at INT64 DEFAULT 0, updated_at INT64 DEFAULT 0)")?;
+        c.query("CREATE REL TABLE IF NOT EXISTS LINK (FROM Node TO Node, id STRING PRIMARY KEY, type STRING, rel STRING DEFAULT '', tags STRING[], weight DOUBLE DEFAULT 0.0, confidence DOUBLE DEFAULT 0.0, created_at INT64 DEFAULT 0)")?;
         // Migrations: add columns to LINK table for old databases created before schema updates
         let _ = c.query("ALTER TABLE LINK ADD IF NOT EXISTS rel STRING DEFAULT ''");
         let _ = c.query("ALTER TABLE LINK ADD IF NOT EXISTS tags STRING[] DEFAULT []");
@@ -107,8 +107,8 @@ impl LadybugStore {
                     let node = NodeRecord {
                         id: id.clone(), type_: type_.clone(), tags: tags.clone(),
                         label: label.clone(), confidence: *confidence, embedding: None,
-                        created_at: chrono::Utc::now().naive_utc(),
-                        updated_at: chrono::Utc::now().naive_utc(),
+                        created_at: chrono::DateTime::from_timestamp(now_epoch(), 0).unwrap().naive_utc(),
+                        updated_at: chrono::DateTime::from_timestamp(now_epoch(), 0).unwrap().naive_utc(),
                     };
                     for tag in tags { ti.entry(tag.clone()).or_default().push(id.clone()); }
                     nc.insert(id.clone(), node);
@@ -121,7 +121,7 @@ impl LadybugStore {
                         id: id.clone(), from: from.clone(), to: to.clone(),
                         type_: type_.clone(), rel: rel.clone(),
                         tags: tags.clone(), weight: *weight, confidence: *confidence,
-                        created_at: chrono::Utc::now().naive_utc(),
+                        created_at: chrono::DateTime::from_timestamp(now_epoch(), 0).unwrap().naive_utc(),
                     });
                 },
                 StoreMutation::SetProperty { .. } => {
@@ -334,17 +334,16 @@ fn apply_delete_node(c: &Connection, id: &str) -> Result<(), StoreError> {
     Ok(())
 }
 
+/// Convert an epoch-seconds INT64 value to NaiveDateTime.
+/// All timestamps are stored as INT64 (seconds since Unix epoch).
 fn ts_from_value(v: &Value) -> chrono::NaiveDateTime {
     match v {
-        Value::String(s) => {
-            // LadybugDB TIMESTAMP format: "2026-07-23 04:30:00"
-            chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
-                .unwrap_or_else(|e| {
-                    tracing::warn!("Failed to parse timestamp '{}': {e}", s);
-                    chrono::Utc::now().naive_utc()
-                })
+        Value::Int64(secs) => {
+            chrono::DateTime::from_timestamp(*secs, 0)
+                .map(|d| d.naive_utc())
+                .unwrap_or_default()
         },
-        // LadybugDB's native TIMESTAMP types (returned as OffsetDateTime, not strings)
+        // Legacy: old DBs before INT64 migration used TIMESTAMP types
         Value::Timestamp(dt) | Value::TimestampTz(dt) | Value::TimestampNs(dt) | Value::TimestampMs(dt) | Value::TimestampSec(dt) => {
             #[allow(clippy::cast_possible_truncation)]
             let nanos: i64 = dt.unix_timestamp_nanos().try_into().unwrap_or(0);
@@ -354,10 +353,14 @@ fn ts_from_value(v: &Value) -> chrono::NaiveDateTime {
             ).map(|d| d.naive_utc()).unwrap_or_default()
         },
         _ => {
-            tracing::warn!("Unexpected timestamp value type: {:?}, using now()", std::mem::discriminant(v));
             chrono::Utc::now().naive_utc()
         },
     }
+}
+
+/// Current epoch seconds as INT64 — for writing to DB.
+fn now_epoch() -> i64 {
+    chrono::Utc::now().timestamp()
 }
 
 fn row_to_node(row: &[Value]) -> Option<NodeRecord> {
@@ -430,8 +433,8 @@ fn parse_prop(row: &[Value]) -> Option<PropRecord> {
         id, owner_id, owner_kind, key,
         kind: kind_str.parse::<PropKind>().unwrap_or(PropKind::String),
         value,
-        created_at: chrono::Utc::now().naive_utc(),
-        updated_at: chrono::Utc::now().naive_utc(),
+        created_at: chrono::DateTime::from_timestamp(now_epoch(), 0).unwrap().naive_utc(),
+        updated_at: chrono::DateTime::from_timestamp(now_epoch(), 0).unwrap().naive_utc(),
     })
 }
 
@@ -550,8 +553,8 @@ impl Store for LadybugStore {
             nc.insert(tid.clone(), NodeRecord {
                 id: tid.clone(), type_: NodeType::Turn, tags: vec![],
                 label: format!("Turn #{}", turn.turn_index), confidence: 1.0,
-                embedding: None, created_at: chrono::Utc::now().naive_utc(),
-                updated_at: chrono::Utc::now().naive_utc(),
+                embedding: None, created_at: chrono::DateTime::from_timestamp(now_epoch(), 0).unwrap().naive_utc(),
+                updated_at: chrono::DateTime::from_timestamp(now_epoch(), 0).unwrap().naive_utc(),
             });
             drop(nc);
         }

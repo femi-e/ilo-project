@@ -13,6 +13,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { recallMemory } from "../pipeline/recall";
+import { extractAndStore } from "../pipeline/extract-and-store";
 import { convertMemoryRoles } from "../pipeline/convert";
 
 let SYSTEM_INJECTED = false;
@@ -108,8 +109,11 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 			// Step 1: Recall memory from ILO (cheap graph queries, always runs)
 			await recallMemory(msgs, latestQuery);
 
-			// Extraction + eviction removed — evaluating GLiNER vs 4B approach.
-			// Will be re-added once extraction model is decided.
+			// Step 2: Extract entities + claims from last turn, store with consolidation
+			// (background — never blocks the response)
+			extractAndStore(latestQuery, msgs).catch((err) =>
+				console.error("[extract] Background extraction failed:", err),
+			);
 		}
 
 		// Step 4: Memory → system role conversion (ALWAYS runs)

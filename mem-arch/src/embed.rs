@@ -14,8 +14,8 @@ use serde_json::Value;
 /// Base URL for the embedding server.
 const EMBED_URL: &str = "http://127.0.0.1:1235/v1/embeddings";
 
-/// Default embedding dimension (bge-base-en-v1.5).
-const DEFAULT_DIM: usize = 768;
+// Use the shared embedding dimension from types.rs
+use crate::types::EMBEDDING_DIM;
 
 /// Shared reqwest client — created once, reused across all calls.
 /// Connection pooling and keep-alive are managed internally by reqwest.
@@ -101,7 +101,7 @@ pub async fn embed_batch(texts: &[&str], is_query: bool) -> Option<Vec<Vec<f32>>
 
 /// Get the expected embedding dimension.
 pub fn embedding_dim() -> usize {
-    DEFAULT_DIM
+    EMBEDDING_DIM
 }
 
 /// Check if the embedding server is reachable.
@@ -126,7 +126,7 @@ mod tests {
     async fn test_embed_single() {
         let emb = embed("Ailo", false).await;
         if let Some(v) = emb {
-            assert_eq!(v.len(), DEFAULT_DIM);
+            assert_eq!(v.len(), EMBEDDING_DIM);
             let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
             assert!((norm - 1.0).abs() < 0.01);
         } else {
@@ -139,8 +139,8 @@ mod tests {
         let q = embed("What is Ailo?", true).await;
         let doc = embed("Ailo", false).await;
         if let (Some(qv), Some(docv)) = (q, doc) {
-            assert_eq!(qv.len(), DEFAULT_DIM);
-            assert_eq!(docv.len(), DEFAULT_DIM);
+            assert_eq!(qv.len(), EMBEDDING_DIM);
+            assert_eq!(docv.len(), EMBEDDING_DIM);
         } else {
             eprintln!("note: embed test skipped — embedding server not available");
         }
@@ -153,7 +153,7 @@ mod tests {
         if let Some(embeddings) = results {
             assert_eq!(embeddings.len(), 3);
             for emb in &embeddings {
-                assert_eq!(emb.len(), DEFAULT_DIM);
+                assert_eq!(emb.len(), EMBEDDING_DIM);
                 let norm: f32 = emb.iter().map(|x| x * x).sum::<f32>().sqrt();
                 assert!((norm - 1.0).abs() < 0.01);
             }
@@ -166,7 +166,7 @@ mod tests {
     async fn test_empty_text() {
         let emb = embed("", false).await;
         if let Some(v) = emb {
-            assert_eq!(v.len(), DEFAULT_DIM);
+            assert_eq!(v.len(), EMBEDDING_DIM);
         } else {
             eprintln!("note: empty text test skipped — embedding server not available");
         }
