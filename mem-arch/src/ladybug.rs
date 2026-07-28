@@ -344,8 +344,17 @@ fn ts_from_value(v: &Value) -> chrono::NaiveDateTime {
                     chrono::Utc::now().naive_utc()
                 })
         },
+        // LadybugDB's native TIMESTAMP types (returned as OffsetDateTime, not strings)
+        Value::Timestamp(dt) | Value::TimestampTz(dt) | Value::TimestampNs(dt) | Value::TimestampMs(dt) | Value::TimestampSec(dt) => {
+            #[allow(clippy::cast_possible_truncation)]
+            let nanos: i64 = dt.unix_timestamp_nanos().try_into().unwrap_or(0);
+            chrono::DateTime::from_timestamp(
+                nanos / 1_000_000_000,
+                (nanos % 1_000_000_000) as u32,
+            ).map(|d| d.naive_utc()).unwrap_or_default()
+        },
         _ => {
-            tracing::warn!("Unexpected timestamp value type, using now()");
+            tracing::warn!("Unexpected timestamp value type: {:?}, using now()", std::mem::discriminant(v));
             chrono::Utc::now().naive_utc()
         },
     }
