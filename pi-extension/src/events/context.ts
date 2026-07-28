@@ -103,10 +103,18 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 		}
 	});
 
-	// ── Turn-scoped guard ─────────────────────────────────────
+		// ── Turn-scoped guard ─────────────────────────────────────
 	// before_provider_request fires for EVERY LLM call (including sub-requests
 	// during tool execution). Steps 1-3 only run once per user turn.
 	let _pipelineRanForQuery: string | null = null;
+
+	// Toggle: set ILO_DISABLE_EVICTION=true to skip expensive extraction + eviction.
+	// Useful when running on cloud APIs with large context windows (128K+).
+	// When disabled, still runs recall (fetch memory from ILO) and conversion
+	// (memory → system role), but skips the 4B model call and chunk scoring.
+	const DISABLE_EVICTION =
+		process.env.ILO_DISABLE_EVICTION === "true" ||
+		process.env.ILO_DISABLE_EVICTION === "1";
 
 	pi.on("before_provider_request", async (event: any, _ctx: any) => {
 		const payload = event.payload;
@@ -122,28 +130,29 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 		if (isNewTurn) {
 			_pipelineRanForQuery = latestQuery;
 
-			const BUDGET = 80000;
-			const tok = estimateTokens(payload.messages);
-
-			// Step 1: Recall memory from ILO
+			// Step 1: Recall memory from ILO (always runs — cheap, just graph queries)
 			await recallMemory(msgs, latestQuery);
 
-			// Step 2: Extract entities + claims via 4B model (no chunk scoring —
-			// that's done locally via entity-type attention in score.ts)
-			const extraction = await extractEntities(
-				latestQuery,
-				payload.messages.length,
-				tok,
-			);
+			if (!DISABLE_EVICTION) {
+				const BUDGET = 80000;
+				const tok = estimateTokens(payload.messages);
 
-			// Step 3: Score + evict using entity-type attention
-			const evictedMsgs = await scoreAndEvict(
-				payload.messages,
-				latestQuery,
-				BUDGET,
-				extraction?.entityInfos ?? null,
-			);
-			payload.messages = evictedMsgs;
+				// Step 2: Extract entities + claims via 4B model
+				const extraction = await extractEntities(
+					latestQuery,
+					payload.messages.length,
+					tok,
+				);
+
+				// Step 3: Score + evict using entity-type attention
+				const evictedMsgs = await scoreAndEvict(
+					payload.messages,
+					latestQuery,
+					BUDGET,
+					extraction?.entityInfos ?? null,
+				);
+				payload.messages = evictedMsgs;
+			}
 		}
 
 		// Step 4: Memory → system role conversion (ALWAYS runs)

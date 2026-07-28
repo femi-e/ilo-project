@@ -63,11 +63,13 @@ export async function extractEntities(
 			(e: any) => e.name,
 		);
 
-		const entityInfos: EntityInfo[] = result.extracted_entities.map((e: any) => ({
-			name: e.name,
-			type: e.type || "other",
-			confidence: e.confidence || 0.5,
-		}));
+		const entityInfos: EntityInfo[] = result.extracted_entities.map(
+			(e: any) => ({
+				name: e.name,
+				type: e.type || "other",
+				confidence: e.confidence || 0.5,
+			}),
+		);
 
 		return { entityInfos };
 	} catch {

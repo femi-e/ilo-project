@@ -77,10 +77,7 @@ Confidence: 0.9+ direct mention, 0.5-0.8 strong implication, <0.5 weak signal. B
 
 // ── Build user prompt with query + optional context ─────────
 
-function buildUserPrompt(
-	query: string,
-	contextSummary?: string,
-): string {
+function buildUserPrompt(query: string, contextSummary?: string): string {
 	const parts: string[] = [];
 
 	parts.push("## User Query");
@@ -352,10 +349,7 @@ export async function analyzeWith4BModel(
 		return null;
 	}
 
-	const userPrompt = buildUserPrompt(
-		query,
-		options?.contextSummary,
-	);
+	const userPrompt = buildUserPrompt(query, options?.contextSummary);
 
 	return call4BModel(userPrompt, options?.signal);
 }

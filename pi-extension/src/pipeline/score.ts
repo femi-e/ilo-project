@@ -77,7 +77,7 @@ export async function scoreAndEvict(
 		? scoreByEntityAttention(
 				chunkInfo.map((c) => c.preview),
 				entityInfos,
-		  )
+			)
 		: null;
 
 	// Composite scoring: 0.5 × attention + 0.3 × recency + 0.2 × overlap
