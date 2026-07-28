@@ -1,7 +1,6 @@
 use crate::types::*;
 use std::collections::HashMap;
 
-#[allow(clippy::async_fn_in_trait)]
 pub trait Store: Send + Sync {
     async fn write_batch(&mut self, batch: WriteBatch) -> Result<(), StoreError>;
     async fn write_maintenance(&mut self, mutations: Vec<StoreMutation>) -> Result<(), StoreError>;

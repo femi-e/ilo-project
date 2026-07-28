@@ -1,5 +1,5 @@
 [package]
-name = "ilo"
+name = "mem-arch"
 version = "0.1.0"
 edition = "2021"
 description = "ILO: Cognitive memory runtime for coding agents — persistent graph memory with FTS/vector retrieval, PPR graph traversal, and Hebbian learning"

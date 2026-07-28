@@ -27,7 +27,9 @@ fn try_lock(lock_path: &std::path::Path) -> Result<std::fs::File, String> {
         .open(lock_path)
         .map_err(|e| format!("Cannot open lock file: {e}"))?;
 
-    // Use flock via libc on macOS/Linux
+    // Use flock via libc on macOS/Linux.
+    // SAFETY: file was just opened successfully (valid fd), LOCK_NB prevents blocking,
+    // and we only use the result code to check success/failure.
     let fd = file.as_raw_fd();
     let ret = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
     if ret != 0 {

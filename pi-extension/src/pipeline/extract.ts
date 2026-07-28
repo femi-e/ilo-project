@@ -2,7 +2,10 @@
 // Calls the 4B model to extract entities and claims from the user query.
 // Stores entity nodes eagerly in ILO, saves labels for turn_end.
 
-import { analyzeWith4BModel, is4BModelAvailable } from "../client/context-rebuild-llm";
+import {
+	analyzeWith4BModel,
+	is4BModelAvailable,
+} from "../client/context-rebuild-llm";
 import { ilo } from "../client/ilo-client";
 
 // Re-export availability check so score.ts controls caching

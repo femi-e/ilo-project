@@ -463,10 +463,10 @@ pub async fn create_link(
 ) -> impl IntoResponse {
     let (from_id, to_id) = {
         let store = state.store.read().await;
-        let f_id = resolve_entity_store(&store, &req.from).await.unwrap_or_else(|| {
+        let f_id = super::helpers::resolve_entity(&store, &req.from).await.unwrap_or_else(|| {
             format!("e_{}", req.from.to_lowercase().replace(' ', "_"))
         });
-        let t_id = resolve_entity_store(&store, &req.to).await.unwrap_or_else(|| {
+        let t_id = super::helpers::resolve_entity(&store, &req.to).await.unwrap_or_else(|| {
             format!("e_{}", req.to.to_lowercase().replace(' ', "_"))
         });
         (f_id, t_id)
@@ -775,9 +775,6 @@ pub async fn status(
 // HELPERS
 // ═══════════════════════════════════════════════════════════
 
-/// Resolve entity label to ID (no auto-create)
-async fn resolve_entity_store(store: &mem_arch::ladybug::LadybugStore, label: &str) -> Option<String> {
-    super::helpers::resolve_entity(store, label).await
-}
+
 
 
