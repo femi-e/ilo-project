@@ -1,7 +1,6 @@
-// Pipeline Step 3: Entity/claim extraction + chunk scoring
-// Calls the 4B model ONCE and returns both extracted data and chunk scores.
-// The chunk scores are used by score.ts for eviction — this replaces the
-// separate scoreChunksWith4BModel call, cutting 4B latency in half.
+// Pipeline Step 3: Entity/claim extraction via 4B model
+// Chunk scoring is done locally via entity-type attention (see score.ts)
+// instead of the LLM — drastically cheaper and faster.
 
 import {
 	analyzeWith4BModel,
@@ -12,23 +11,26 @@ import { ilo } from "../client/ilo-client";
 // Re-export availability check
 export { is4BModelAvailable };
 
+export interface EntityInfo {
+	name: string;
+	type: string;
+	confidence: number;
+}
+
 export interface ExtractionResult {
-	chunkScores: Record<string, number> | null;
-	entityLabels: string[];
+	entityInfos: EntityInfo[];
 }
 
 export async function extractEntities(
 	latestQuery: string,
 	msgCount: number,
 	estimatedTokens: number,
-	chunkPreviews?: string[],
 ): Promise<ExtractionResult | null> {
 	if (!latestQuery || latestQuery === "(unknown)") return null;
 
 	try {
 		const result = await analyzeWith4BModel(latestQuery, {
 			contextSummary: `Session has ${msgCount} chunks (~${estimatedTokens} tokens)`,
-			chunkPreviews,
 		});
 		if (!result) return null;
 
@@ -61,13 +63,13 @@ export async function extractEntities(
 			(e: any) => e.name,
 		);
 
-		return {
-			chunkScores:
-				Object.keys(result.chunk_scores).length > 0
-					? result.chunk_scores
-					: null,
-			entityLabels: result.extracted_entities.map((e: any) => e.name),
-		};
+		const entityInfos: EntityInfo[] = result.extracted_entities.map((e: any) => ({
+			name: e.name,
+			type: e.type || "other",
+			confidence: e.confidence || 0.5,
+		}));
+
+		return { entityInfos };
 	} catch {
 		// Non-critical — extraction is best-effort
 		return null;

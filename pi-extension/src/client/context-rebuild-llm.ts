@@ -80,7 +80,6 @@ Confidence: 0.9+ direct mention, 0.5-0.8 strong implication, <0.5 weak signal. B
 function buildUserPrompt(
 	query: string,
 	contextSummary?: string,
-	chunkPreviews?: string[],
 ): string {
 	const parts: string[] = [];
 
@@ -91,18 +90,6 @@ function buildUserPrompt(
 		parts.push("");
 		parts.push("## Context Summary");
 		parts.push(contextSummary);
-	}
-
-	if (chunkPreviews && chunkPreviews.length > 0) {
-		parts.push("");
-		parts.push("## Context Chunks");
-		for (let i = 0; i < chunkPreviews.length; i++) {
-			parts.push(`[${i}] ${chunkPreviews[i]}`);
-		}
-		parts.push("");
-		parts.push(
-			'Score each chunk index ("0", "1", ...) 0.0-1.0 by relevance to the query.',
-		);
 	}
 
 	// Short reminder to use JSON — system prompt has the full schema.
@@ -346,16 +333,10 @@ ${chunkSummary}`;
 
 /**
  * Analyze a user query and context using the 4B model.
- * The model performs:
- *   - Task analysis
- *   - Entity extraction
- *   - Claim extraction with relationship categorization
- *   - Chunk relevance scoring
- *   - Plan generation
+ * Extracts entities, claims, and chunk relevance scores.
  *
  * @param query - The user's current query
  * @param options.contextSummary - Optional high-level context summary
- * @param options.chunkPreviews - Optional previews of context chunks for scoring
  * @param options.signal - Optional AbortSignal
  * @returns Structured analysis result, or null if the model is unreachable
  */
@@ -363,7 +344,6 @@ export async function analyzeWith4BModel(
 	query: string,
 	options?: {
 		contextSummary?: string;
-		chunkPreviews?: string[];
 		signal?: AbortSignal;
 	},
 ): Promise<ContextRebuildResult | null> {
@@ -375,7 +355,6 @@ export async function analyzeWith4BModel(
 	const userPrompt = buildUserPrompt(
 		query,
 		options?.contextSummary,
-		options?.chunkPreviews,
 	);
 
 	return call4BModel(userPrompt, options?.signal);

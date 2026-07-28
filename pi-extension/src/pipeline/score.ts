@@ -1,14 +1,64 @@
 // Pipeline Step 2: Context scoring + eviction
-// Takes pre-computed scores (from the 4B model's analyzeWith4BModel call)
-// and applies a composite formula before evicting low-scored chunks.
+// Uses entity-type attention instead of LLM chunk scoring.
+// Each entity type gets an attention weight; chunks containing
+// high-weight types get higher retention scores.
 //
-//   composite = 0.5 × model_score + 0.3 × recency + 0.2 × entity_overlap
+//   composite = 0.5 × entity_attention + 0.3 × recency + 0.2 × entity_overlap
+
+import type { EntityInfo } from "./extract";
+
+// ── Entity-type attention weights ────────────────────────────
+// Higher = chunk mentioning this type is more important to keep.
+// These can be tuned or learned over time.
+const ENTITY_TYPE_WEIGHTS: Record<string, number> = {
+	component: 1.0,
+	tool: 0.9,
+	task: 0.9,
+	file: 0.8,
+	service: 0.8,
+	library: 0.8,
+	person: 0.7,
+	concept: 0.6,
+	config: 0.5,
+	other: 0.3,
+};
+const DEFAULT_TYPE_WEIGHT = 0.5;
+
+/**
+ * Score each chunk by entity-type attention: which entity types
+ * appear in the chunk preview, weighted by their importance.
+ * Returns 0.0-1.0 per chunk, or null if no entity info available.
+ */
+function scoreByEntityAttention(
+	chunkPreviews: string[],
+	entityInfos: EntityInfo[],
+): number[] | null {
+	if (!entityInfos || entityInfos.length === 0) return null;
+
+	// For each entity, check which chunks mention its name (fuzzy match)
+	// Then score each chunk by the max weight of any matching entity type.
+	const scores = chunkPreviews.map((preview) => {
+		const lower = preview.toLowerCase();
+		let maxWeight = 0;
+		for (const entity of entityInfos) {
+			if (lower.includes(entity.name.toLowerCase())) {
+				const w = ENTITY_TYPE_WEIGHTS[entity.type] ?? DEFAULT_TYPE_WEIGHT;
+				if (w > maxWeight) maxWeight = w;
+			}
+		}
+		return maxWeight;
+	});
+
+	// Normalize to 0.0-1.0
+	const max = Math.max(...scores, 1);
+	return scores.map((s) => s / max);
+}
 
 export async function scoreAndEvict(
 	messages: any[],
 	latestQuery: string,
 	budget: number,
-	chunkScores: Record<string, number> | null,
+	entityInfos: EntityInfo[] | null,
 ): Promise<any[]> {
 	// Build chunk info for scoring
 	const chunkInfo = messages.map((m: any) => ({
@@ -22,26 +72,30 @@ export async function scoreAndEvict(
 		.split(/\s+/)
 		.filter((w: string) => w.length > 2);
 
-	// Determine per-chunk model scores (or recency-only fallback)
-	const rawScores: number[] = chunkScores
-		? chunkInfo.map(
-				(_, i) =>
-					chunkScores[String(i)] ?? chunkScores[i] ?? i / chunkInfo.length,
-			)
-		: chunkInfo.map((_, i) => i / chunkInfo.length);
+	// Entity-type attention scores (or uniform fallback)
+	const attentionScores = entityInfos
+		? scoreByEntityAttention(
+				chunkInfo.map((c) => c.preview),
+				entityInfos,
+		  )
+		: null;
 
-	// Composite scoring: 0.5 × model + 0.3 × recency + 0.2 × overlap
-	const scored = rawScores.map((s: number, i: number) => {
+	// Composite scoring: 0.5 × attention + 0.3 × recency + 0.2 × overlap
+	const scored = chunkInfo.map((info, i) => {
 		const recency = chunkInfo.length > 1 ? i / (chunkInfo.length - 1) : 1.0;
 		const entityOverlap =
 			queryWords.length > 0
 				? queryWords.filter((w: string) =>
-						chunkInfo[i].preview.toLowerCase().includes(w),
+						info.preview.toLowerCase().includes(w),
 					).length / queryWords.length
 				: 0;
+		const attention =
+			attentionScores !== null
+				? (attentionScores[i] ?? 0.5)
+				: i / chunkInfo.length;
 		return {
 			idx: i,
-			score: 0.5 * s + 0.3 * recency + 0.2 * entityOverlap,
+			score: 0.5 * attention + 0.3 * recency + 0.2 * entityOverlap,
 		};
 	});
 

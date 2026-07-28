@@ -77,16 +77,9 @@ const CHAT_IDLE_TIMEOUT = parseInt(
 	10,
 ); // 5 min default
 
-/** 4B model for context rebuild — GGUF path and port. Set env ILO_4B_MODEL_PATH or LLAMA_4B_MODEL to override. */
-const _4B_MODEL_PATH =
-	process.env.ILO_4B_MODEL_PATH ||
-	process.env.LLAMA_4B_MODEL ||
-	path.join(
-		os.homedir(),
-		"models",
-		"qwen3.5-35b-a3b",
-		"Qwen3.5-4B-Q4_K_M.gguf",
-	);
+/** 4B model for context rebuild — MTPLX model ID. Set env ILO_4B_MODEL to override. */
+const _4B_MODEL_ID =
+	process.env.ILO_4B_MODEL || "Youssofal/Qwen3.5-4B-MTPLX-Optimized-Speed";
 
 /** 4B model server port (one past chat start = 1236). */
 const _4B_PORT = parseInt(
@@ -460,28 +453,37 @@ async function start4BModelServer(): Promise<boolean> {
 		// Not running — will start
 	}
 
-	if (!fs.existsSync(_4B_MODEL_PATH)) {
-		console.error(`[4b] Model not found at ${_4B_MODEL_PATH}`);
+	const state = getState();
+
+	// Check if MTPLX model is cached locally
+	const mtplxCacheDir = path.join(
+		os.homedir(),
+		".mtplx",
+		"models",
+		_4B_MODEL_ID.replace("/", "--"),
+	);
+	if (!fs.existsSync(mtplxCacheDir)) {
+		console.error(`[4b] MTPLX model not cached at ${mtplxCacheDir}`);
+		console.error("[4b] Run: mtplx pull " + _4B_MODEL_ID);
 		return false;
 	}
 
-	const state = getState();
-
 	const proc = spawn(
-		LLAMA_SERVER_BINARY,
+		"mtplx",
 		[
+			"serve",
+			"--model",
+			_4B_MODEL_ID,
 			"--port",
 			String(port),
 			"--host",
 			"127.0.0.1",
-			"--model",
-			_4B_MODEL_PATH,
-			"--ctx-size",
-			"16384",
-			"--n-gpu-layers",
-			"99",
-			"--flash-attn",
-			"on",
+			"--reasoning",
+			"off",
+			"--default-temperature",
+			"0.1",
+			"--default-top-p",
+			"0.1",
 		],
 		{
 			env: { ...process.env },
@@ -490,11 +492,15 @@ async function start4BModelServer(): Promise<boolean> {
 	);
 
 	state._4bProcess = proc;
-	console.error(
-		`[4b] starting llama-server (${_4B_MODEL_PATH}) on :${port}...`,
-	);
+	console.error(`[4b] starting MTPLX server (${_4B_MODEL_ID}) on :${port}...`);
 
-	proc.stdout?.on("data", (d) => process.stdout.write(`[4b] ${d}`));
+	proc.stdout?.on("data", (d) => {
+		// Suppress verbose MTPLX stats footer noise
+		const line = d.toString();
+		if (!line.includes("---") && !line.includes("⚡")) {
+			process.stdout.write(`[4b] ${line}`);
+		}
+	});
 	proc.stderr?.on("data", (d) => process.stderr.write(`[4b] ${d}`));
 
 	proc.on("exit", (code) => {
@@ -502,10 +508,10 @@ async function start4BModelServer(): Promise<boolean> {
 		state._4bProcess = null;
 	});
 
-	for (let i = 0; i < 50; i++) {
+	for (let i = 0; i < 100; i++) {
 		await new Promise((r) => setTimeout(r, 100));
 		try {
-			const res = await fetch(`http://127.0.0.1:${port}/`);
+			const res = await fetch(`http://127.0.0.1:${port}/health`);
 			if (res.ok) {
 				console.error(`[4b] started successfully on :${port}`);
 				return true;
@@ -515,7 +521,7 @@ async function start4BModelServer(): Promise<boolean> {
 		}
 	}
 
-	console.error(`[4b] failed to start within 5 seconds`);
+	console.error(`[4b] failed to start within 10 seconds`);
 	return false;
 }
 

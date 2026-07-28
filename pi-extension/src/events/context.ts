@@ -128,28 +128,20 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 			// Step 1: Recall memory from ILO
 			await recallMemory(msgs, latestQuery);
 
-			// Build chunk previews for 4B model to score
-			const chunkPreviews = payload.messages.map((m: any) => {
-				const c = m.content;
-				if (typeof c === "string") return c.slice(0, 120).replace(/\n/g, " ");
-				if (Array.isArray(c) && c[0]?.text) return c[0].text.slice(0, 120);
-				return `(${m.role || "?"})`;
-			});
-
-			// Step 2: Call 4B model ONCE for both scores + extraction
+			// Step 2: Extract entities + claims via 4B model (no chunk scoring —
+			// that's done locally via entity-type attention in score.ts)
 			const extraction = await extractEntities(
 				latestQuery,
 				payload.messages.length,
 				tok,
-				chunkPreviews,
 			);
 
-			// Step 3: Score + evict using chunk scores from the same 4B call
+			// Step 3: Score + evict using entity-type attention
 			const evictedMsgs = await scoreAndEvict(
 				payload.messages,
 				latestQuery,
 				BUDGET,
-				extraction?.chunkScores ?? null,
+				extraction?.entityInfos ?? null,
 			);
 			payload.messages = evictedMsgs;
 		}
