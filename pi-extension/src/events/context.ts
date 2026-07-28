@@ -13,7 +13,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { recallMemory } from "../pipeline/recall";
-import { scoreAndEvict, reset4bAvailability } from "../pipeline/score";
+import { scoreAndEvict } from "../pipeline/score";
 import { extractEntities } from "../pipeline/extract";
 import { convertMemoryRoles } from "../pipeline/convert";
 
@@ -85,7 +85,6 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 	pi.on("session_start", () => {
 		SYSTEM_INJECTED = false;
 		_pipelineRanForQuery = null;
-		reset4bAvailability();
 	});
 
 	pi.on("context", async (_event: any, _ctx: any) => {
@@ -124,21 +123,26 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 			_pipelineRanForQuery = latestQuery;
 
 			const BUDGET = 80000;
+			const tok = estimateTokens(payload.messages);
 
 			// Step 1: Recall memory from ILO
 			await recallMemory(msgs, latestQuery);
 
-			// Step 2: Score + evict chunks
+			// Step 2: Call 4B model ONCE for both scores + extraction
+			const extraction = await extractEntities(
+				latestQuery,
+				payload.messages.length,
+				tok,
+			);
+
+			// Step 3: Score + evict using chunk scores from the same 4B call
 			const evictedMsgs = await scoreAndEvict(
 				payload.messages,
 				latestQuery,
 				BUDGET,
+				extraction?.chunkScores ?? null,
 			);
 			payload.messages = evictedMsgs;
-
-			// Step 3: Extract entities + claims
-			const tok = estimateTokens(payload.messages);
-			await extractEntities(latestQuery, payload.messages.length, tok);
 		}
 
 		// Step 4: Memory → system role conversion (ALWAYS runs)

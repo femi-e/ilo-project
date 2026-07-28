@@ -1,28 +1,31 @@
-// Pipeline Step 3: Entity/claim extraction
-// Calls the 4B model to extract entities and claims from the user query.
-// Stores entity nodes eagerly in ILO, saves labels for turn_end.
+// Pipeline Step 3: Entity/claim extraction + chunk scoring
+// Calls the 4B model ONCE and returns both extracted data and chunk scores.
+// The chunk scores are used by score.ts for eviction — this replaces the
+// separate scoreChunksWith4BModel call, cutting 4B latency in half.
 
-import {
-	analyzeWith4BModel,
-	is4BModelAvailable,
-} from "../client/context-rebuild-llm";
+import { analyzeWith4BModel, is4BModelAvailable } from "../client/context-rebuild-llm";
 import { ilo } from "../client/ilo-client";
 
-// Re-export availability check so score.ts controls caching
+// Re-export availability check
 export { is4BModelAvailable };
+
+export interface ExtractionResult {
+	chunkScores: Record<string, number> | null;
+	entityLabels: string[];
+}
 
 export async function extractEntities(
 	latestQuery: string,
 	msgCount: number,
 	estimatedTokens: number,
-): Promise<void> {
-	if (!latestQuery || latestQuery === "(unknown)") return;
+): Promise<ExtractionResult | null> {
+	if (!latestQuery || latestQuery === "(unknown)") return null;
 
 	try {
 		const result = await analyzeWith4BModel(latestQuery, {
 			contextSummary: `Session has ${msgCount} chunks (~${estimatedTokens} tokens)`,
 		});
-		if (!result) return;
+		if (!result) return null;
 
 		// Save labels + claims for turn_end to use in a single atomic write
 		(globalThis as any).__pendingEntityLabels = result.extracted_entities.map(
@@ -52,7 +55,15 @@ export async function extractEntities(
 		(globalThis as any).__lastExtractedLabels = result.extracted_entities.map(
 			(e: any) => e.name,
 		);
+
+		return {
+			chunkScores: Object.keys(result.chunk_scores).length > 0
+				? result.chunk_scores
+				: null,
+			entityLabels: result.extracted_entities.map((e: any) => e.name),
+		};
 	} catch {
 		// Non-critical — extraction is best-effort
+		return null;
 	}
 }
