@@ -103,18 +103,37 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 		}
 	});
 
-		// ── Turn-scoped guard ─────────────────────────────────────
+	// ── Turn-scoped guard ─────────────────────────────────────
 	// before_provider_request fires for EVERY LLM call (including sub-requests
 	// during tool execution). Steps 1-3 only run once per user turn.
 	let _pipelineRanForQuery: string | null = null;
 
-	// Toggle: set ILO_DISABLE_EVICTION=true to skip expensive extraction + eviction.
-	// Useful when running on cloud APIs with large context windows (128K+).
-	// When disabled, still runs recall (fetch memory from ILO) and conversion
-	// (memory → system role), but skips the 4B model call and chunk scoring.
-	const DISABLE_EVICTION =
-		process.env.ILO_DISABLE_EVICTION === "true" ||
-		process.env.ILO_DISABLE_EVICTION === "1";
+	// ── Auto-detect: skip eviction on cloud APIs ─────────────────
+	// When the model talks to a remote API (not localhost), skip the expensive
+	// extraction + eviction steps. Local models get the full pipeline.
+	// Can be overridden with ILO_DISABLE_EVICTION=true/false.
+	function shouldDisableEviction(ctx: any): boolean {
+		const envOverride = process.env.ILO_DISABLE_EVICTION;
+		if (envOverride === "true" || envOverride === "1") return true;
+		if (envOverride === "false" || envOverride === "0") return false;
+
+		// Auto-detect: if the model connects to localhost, it is local.
+		// Cloud APIs (Anthropic, OpenAI, etc.) mean we skip eviction.
+		try {
+			const model = (ctx as any)?.model;
+			if (model) {
+				const baseUrl = model.baseUrl || "";
+				const isLocal =
+					baseUrl.includes("localhost") ||
+					baseUrl.includes("127.0.0.1") ||
+					baseUrl.includes("::1");
+				return !isLocal;
+			}
+		} catch {
+			// If we can't detect, default to enabled (local assumption)
+		}
+		return false;
+	}
 
 	pi.on("before_provider_request", async (event: any, _ctx: any) => {
 		const payload = event.payload;
@@ -133,7 +152,7 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 			// Step 1: Recall memory from ILO (always runs — cheap, just graph queries)
 			await recallMemory(msgs, latestQuery);
 
-			if (!DISABLE_EVICTION) {
+			if (!shouldDisableEviction(_ctx)) {
 				const BUDGET = 80000;
 				const tok = estimateTokens(payload.messages);
 
