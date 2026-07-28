@@ -1,16 +1,9 @@
 // ============================================================================
-// lib/context-rebuild-llm.ts — Call a 4B model for context rebuild extraction
+// lib/context-rebuild-llm.ts — Fast 4B model call for memory extraction
 // ============================================================================
-// This module calls a local 4B parameter model (OpenAI-compatible API) to
-// handle the cognitive work of context_rebuild:
-//   - Task analysis
-//   - Entity extraction with typing
-//   - Claim extraction with relationship categorization
-//   - Context chunk relevance scoring
-//   - Plan generation
-//
-// The 4B model runs on port ILOC_4B_PORT (default 1236) and responds with
-// structured JSON via tool calling or plain JSON output.
+// Calls a local 4B model (OpenAI-compatible API, port 1236) to extract
+// entities, claims, and chunk relevance scores from the current context.
+// Optimized for low latency: minimal prompt, no analysis/plan output.
 // ============================================================================
 
 import { LOCAL_CHAT_PORT_START } from "../lifecycle/constants";
@@ -32,8 +25,6 @@ function getModelId(): string {
 // ── Output types ─────────────────────────────────────────────
 
 export interface ContextRebuildResult {
-	analysis: string;
-	plan: string;
 	chunk_scores: Record<string, number>;
 	extracted_entities: Array<{
 		name: string;
@@ -67,79 +58,24 @@ export interface ContextRebuildResult {
 	}>;
 }
 
-// ── System prompt for the 4B model ──────────────────────────
+// ── Compact system prompt for the 4B model ──────────────────
+// Keep this SHORT — every token is paid in TTFT latency.
 
-const SYSTEM_PROMPT = `You are a context analysis engine for a coding agent with persistent memory. Your job is to analyze a user query and the current context, then extract structured information.
-
-CRITICAL: Do NOT think step by step. Do NOT include any reasoning or thinking process. Output ONLY valid JSON immediately with no preamble.
-
-You MUST respond with ONLY a valid JSON object (no markdown, no code fences). Use this exact schema:
-
-{
-  "analysis": "Your step-by-step analysis of what the user is asking for",
-  "plan": "Your execution plan as a single string",
-  "chunk_scores": {},
-  "extracted_entities": [
-    {
-      "name": "entity_name",
-      "type": "component|file|tool|service|concept|person|library|config|task|other",
-      "confidence": 0.0-1.0,
-      "tags": ["tag1", "tag2"]
-    }
-  ],
-  "extracted_claims": [
-    {
-      "subject": "entity_a",
-      "relationship": "depends on",
-      "object": "entity_b",
-      "category": "Depends|Intends|Implements|Contains|Relates|References|Precedes",
-      "confidence": 0.0-1.0
-    }
-  ]
-}
-
-Entity types:
-  - component: software component, module, library
-  - file: a specific file or file path
-  - tool: a tool, command, or utility
-  - service: a running service, API, or external service
-  - concept: an abstract concept, idea, or pattern
-  - person: a person or role
-  - library: a code library or package
-  - config: a configuration setting or file
-  - task: a task, todo, or work item
-  - other: anything else
-
-Claim categories (7 types):
-  - Depends: A requires B (depends on, uses, requires, needs)
-  - Intends: User/agent wants to do something (wants to, aims to, plans to)
-  - Implements: A creates/builds/implements B
-  - Contains: A contains/is part of B
-  - Relates: A is related to/similar to B
-  - References: A calls/references/mentions B
-  - Precedes: A happens before/follows B
-
-Be thorough but precise. Only extract entities and claims that are clearly present in the query. Set confidence based on how explicit the evidence is (0.9+ for direct mentions, 0.5-0.8 for strong implications, below 0.5 for weak signals).`;
-
-// ── Build user prompt with query + optional context ─────────
-// NOTE: Instructions are embedded in the user message because 4B models
-// follow user messages more reliably than system messages.
-
-const USER_INSTRUCTIONS = `
-
----
-Extract structured information from the above. Respond with ONLY a JSON object (no markdown, no code fences).
+const SYSTEM_PROMPT = `Extract structured info from a user query and context. Output ONLY valid JSON — no reasoning, no preamble, no markdown.
 
 Schema:
 {
-  "analysis": "description of the task",
-  "plan": "execution plan",
   "chunk_scores": {},
-  "extracted_entities": [{"name": "...", "type": "component|file|tool|service|concept|person|library|config|task|other", "confidence": 0.0-1.0, "tags": ["..."]}],
-  "extracted_claims": [{"subject": "a", "relationship": "depends on", "object": "b", "category": "Depends|Intends|Implements|Contains|Relates|References|Precedes", "confidence": 0.0-1.0}]
+  "extracted_entities": [{"name":"...","type":"...","confidence":0.0-1.0,"tags":["..."]}],
+  "extracted_claims": [{"subject":"a","relationship":"...","object":"b","category":"...","confidence":0.0-1.0}]
 }
 
-Be thorough but precise. Set confidence: 0.9+ for direct mentions, 0.5-0.8 for strong implications, below 0.5 for weak signals.`;
+Entity types: component|file|tool|service|concept|person|library|config|task|other
+Claim categories: Depends|Intends|Implements|Contains|Relates|References|Precedes
+
+Confidence: 0.9+ direct mention, 0.5-0.8 strong implication, <0.5 weak signal. Be precise — only extract what's clearly present.`;
+
+// ── Build user prompt with query + optional context ─────────
 
 function buildUserPrompt(
 	query: string,
@@ -159,18 +95,19 @@ function buildUserPrompt(
 
 	if (chunkPreviews && chunkPreviews.length > 0) {
 		parts.push("");
-		parts.push("## Context Chunks (index: role: preview)");
+		parts.push("## Context Chunks");
 		for (let i = 0; i < chunkPreviews.length; i++) {
 			parts.push(`[${i}] ${chunkPreviews[i]}`);
 		}
 		parts.push("");
 		parts.push(
-			'For chunk_scores, score each chunk index (e.g., "0", "1", "2") with a relevance score 0.0-1.0 relative to the user query.',
+			'Score each chunk index ("0", "1", ...) 0.0-1.0 by relevance to the query.',
 		);
 	}
 
-	// Append JSON instructions directly to user message (4B models follow user msg best)
-	parts.push(USER_INSTRUCTIONS);
+	// Short reminder to use JSON — system prompt has the full schema.
+	parts.push("");
+	parts.push("Respond with the JSON schema from the system prompt.");
 
 	return parts.join("\n");
 }
@@ -188,7 +125,7 @@ async function call4BModel(
 		model: getModelId(),
 		messages: [systemMsg, userMsg],
 		temperature: 0.1,
-		max_tokens: 2048,
+		max_tokens: 1024,
 		// Disable thinking for reliable structured output on Qwen models
 		chat_template_kwargs: { enable_thinking: false },
 	};
@@ -278,8 +215,6 @@ async function call4BModel(
 
 function validateAndFill(raw: any): ContextRebuildResult {
 	const result: ContextRebuildResult = {
-		analysis: String(raw.analysis || ""),
-		plan: String(raw.plan || ""),
 		chunk_scores: raw.chunk_scores || {},
 		extracted_entities: [],
 		extracted_claims: [],

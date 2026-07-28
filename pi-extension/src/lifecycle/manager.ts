@@ -480,6 +480,8 @@ async function start4BModelServer(): Promise<boolean> {
 			"16384",
 			"--n-gpu-layers",
 			"99",
+			"--flash-attn",
+			"on",
 		],
 		{
 			env: { ...process.env },
