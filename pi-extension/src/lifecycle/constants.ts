@@ -5,23 +5,27 @@
 // work regardless of the current working directory.
 // ============================================================================
 
-import { fileURLToPath } from 'node:url';
-import * as path from 'node:path';
+import { fileURLToPath } from "node:url";
+import * as path from "node:path";
 
 /** Root project directory (ilo/). From lib/ up 4 levels. */
 export const EXTENSION_DIR = path.resolve(
-  fileURLToPath(new URL('.', import.meta.url)),
-  '..', '..', '..', '..'
+	fileURLToPath(new URL(".", import.meta.url)),
+	"..",
+	"..",
+	"..",
+	"..",
 );
 
 /** Extension source directory (.pi/extensions/core/). */
 export const EXT_SRC_DIR = path.resolve(
-  fileURLToPath(new URL('.', import.meta.url)),
-  '..', '..'
+	fileURLToPath(new URL(".", import.meta.url)),
+	"..",
+	"..",
 );
 
 /** Runtime data directory (ilo/var/). */
-export const EXT_VAR_DIR = path.join(EXTENSION_DIR, 'var');
+export const EXT_VAR_DIR = path.join(EXTENSION_DIR, "var");
 
 /** SearXNG metasearch port (Docker/Podman: 18089 → 8080). */
 export const SEARXNG_PORT = 18089;

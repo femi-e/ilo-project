@@ -1,10 +1,54 @@
+// ============================================================================
+// events/context.ts — before_provider_request pipeline coordinator
+// ============================================================================
+// Orchestrates the 4-step memory pipeline:
+//   1. Recall: fetch relevant memory from ILO
+//   2. Score: 4B model scores chunks, evict low-scored
+//   3. Extract: 4B model extracts entities + claims
+//   4. Convert: memory→system role conversion
+//
+// Uses a turn-scoped guard to avoid re-running steps 1-3 on sub-requests
+// (which fire during tool execution within the same user turn).
+// ============================================================================
+
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import {
-	analyzeWith4BModel,
-	scoreChunksWith4BModel,
-	is4BModelAvailable,
-} from "../client/context-rebuild-llm";
-import { ilo } from "../client/ilo-client";
+import { recallMemory } from "../pipeline/recall";
+import { scoreAndEvict, reset4bAvailability } from "../pipeline/score";
+import { extractEntities } from "../pipeline/extract";
+import { convertMemoryRoles } from "../pipeline/convert";
+
+let SYSTEM_INJECTED = false;
+
+/// Find the latest user message text to use as the "current topic".
+function findLatestUserQuery(msgs: any[]): string {
+	for (let i = msgs.length - 1; i >= 0; i--) {
+		if (msgs[i]?.role === "user") {
+			const c = msgs[i].content;
+			if (typeof c === "string") return c.slice(0, 80).replace(/\n/g, " ");
+			if (Array.isArray(c)) {
+				for (const part of c) {
+					if (part?.text) return part.text.slice(0, 80).replace(/\n/g, " ");
+				}
+			}
+		}
+	}
+	return "(unknown)";
+}
+
+/// Estimate tokens from a messages array.
+function estimateTokens(messages: any[]): number {
+	let total = 0;
+	for (const msg of messages) {
+		const content = msg.content;
+		if (typeof content === "string") total += content.length;
+		else if (Array.isArray(content)) {
+			for (const item of content) {
+				if (item?.text) total += item.text.length;
+			}
+		}
+	}
+	return Math.round(total / 4);
+}
 
 const SYSTEM_PROMPT = `# Identity
 
@@ -37,60 +81,16 @@ The context window is managed automatically. Old or irrelevant context is evicte
 - If the user seems unsure, help them explore. Don't rush to a solution.
 - Use web search when you need current information the user hasn't provided.`;
 
-let SYSTEM_INJECTED = false;
-
-/// 4B model availability cache (checked once per session)
-let _4bAvailable = false;
-let _4bChecked = false;
-
-/// Extract a preview (first ~80 chars) of a message's content.
-function extractPreview(msg: any): string {
-	const c = msg.content;
-	if (typeof c === "string") return c.slice(0, 80).replace(/\n/g, " ");
-	if (Array.isArray(c)) {
-		for (const part of c) {
-			if (part?.text) return part.text.slice(0, 80).replace(/\n/g, " ");
-		}
-	}
-	return "(no preview)";
-}
-
-/// Find the latest user message text to use as the "current topic".
-function findLatestUserQuery(msgs: any[]): string {
-	for (let i = msgs.length - 1; i >= 0; i--) {
-		if (msgs[i]?.role === "user") {
-			return extractPreview(msgs[i]);
-		}
-	}
-	return "(unknown)";
-}
-
-/// Estimate tokens from a messages array.
-function estimateTokens(messages: any[]): number {
-	let total = 0;
-	for (const msg of messages) {
-		const content = msg.content;
-		if (typeof content === "string") total += content.length;
-		else if (Array.isArray(content)) {
-			for (const item of content) {
-				if (item?.text) total += item.text.length;
-			}
-		}
-	}
-	return Math.round(total / 4);
-}
-
 export function registerContextHooks(pi: ExtensionAPI): void {
 	pi.on("session_start", () => {
 		SYSTEM_INJECTED = false;
-		_4bAvailable = false;
-		_4bChecked = false;
 		_pipelineRanForQuery = null;
+		reset4bAvailability();
 	});
 
 	pi.on("context", async (_event: any, _ctx: any) => {
 		// Context event is for non-destructive inspection.
-		// Actual work (recall, scoring, extraction) is in before_provider_request.
+		// Actual work is in before_provider_request.
 	});
 
 	pi.on("before_agent_start", async (event: any, _ctx: any) => {
@@ -106,14 +106,9 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 
 	// ── Turn-scoped guard ─────────────────────────────────────
 	// before_provider_request fires for EVERY LLM call (including sub-requests
-	// during tool execution). The expensive pipeline (recall, score, extract)
-	// should only run once per user turn — everything after the first call
-	// only needs the memory→system role conversion.
-	//
-	// We track the last user query to detect new turns vs sub-requests.
+	// during tool execution). Steps 1-3 only run once per user turn.
 	let _pipelineRanForQuery: string | null = null;
 
-	// 4B model context scoring + memory recall + entity extraction
 	pi.on("before_provider_request", async (event: any, _ctx: any) => {
 		const payload = event.payload;
 		const msgs = payload?.messages;
@@ -128,149 +123,26 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 		if (isNewTurn) {
 			_pipelineRanForQuery = latestQuery;
 
-			try {
-				const BUDGET = 80000;
+			const BUDGET = 80000;
 
-				// ── Step 1: Recall ──
-				if (latestQuery !== "(unknown)") {
-					try {
-						const memoryContext = await ilo.recall(latestQuery);
-						if (
-							memoryContext.ok &&
-							memoryContext.data?.context &&
-							memoryContext.data.nodes > 0
-						) {
-							const memoryMsg = {
-								role: "memory",
-								content: memoryContext.data.context,
-								customType: "ilo_memory",
-							};
-							payload.messages.splice(msgs.length - 1, 0, memoryMsg);
-						}
-					} catch {
-						// Non-critical — proceed without memory recall
-					}
-				}
+			// Step 1: Recall memory from ILO
+			await recallMemory(msgs, latestQuery);
 
-				const updatedMsgs = payload.messages;
+			// Step 2: Score + evict chunks
+			const evictedMsgs = await scoreAndEvict(
+				payload.messages,
+				latestQuery,
+				BUDGET,
+			);
+			payload.messages = evictedMsgs;
 
-				// ── Step 2: Score + evict ──
-				const chunkInfo = updatedMsgs.map((m: any) => ({
-					role: m.role || m.customType || "?",
-					preview: extractPreview(m),
-				}));
-
-				// Extract query words for entity overlap scoring
-				const queryWords = latestQuery
-					.toLowerCase()
-					.split(/\s+/)
-					.filter((w: string) => w.length > 2);
-
-				if (!_4bChecked) {
-					_4bAvailable = await is4BModelAvailable();
-					_4bChecked = true;
-				}
-
-				// Get model scores (or use recency-only fallback when 4B is off)
-				const rawScores = _4bAvailable
-					? await scoreChunksWith4BModel(chunkInfo, latestQuery)
-					: chunkInfo.map((_: any, i: number) => i / chunkInfo.length);
-
-				if (rawScores) {
-					// Composite: 0.5 × model + 0.3 × recency + 0.2 × entity_overlap
-					const scored = rawScores.map((s: number, i: number) => {
-						const recency =
-							chunkInfo.length > 1 ? i / (chunkInfo.length - 1) : 1.0;
-						const entityOverlap =
-							queryWords.length > 0
-								? queryWords.filter((w: string) =>
-										chunkInfo[i].preview.toLowerCase().includes(w),
-									).length / queryWords.length
-								: 0;
-						return {
-							idx: i,
-							score: 0.5 * s + 0.3 * recency + 0.2 * entityOverlap,
-						};
-					});
-
-					const alwaysKeep = new Set<number>();
-					alwaysKeep.add(updatedMsgs.length - 1);
-					for (let i = updatedMsgs.length - 2; i >= 0; i--) {
-						if (updatedMsgs[i].role === "assistant") {
-							alwaysKeep.add(i);
-							break;
-						}
-					}
-
-					const droppable = scored
-						.filter((s) => !alwaysKeep.has(s.idx) && s.score < 0.4)
-						.sort((a, b) => a.score - b.score);
-
-					const toDrop = new Set<number>();
-					for (const s of droppable) {
-						if (alwaysKeep.has(s.idx)) continue;
-						toDrop.add(s.idx);
-						const remaining = updatedMsgs.filter(
-							(_: any, i: number) => !toDrop.has(i),
-						);
-						if (estimateTokens(remaining) <= BUDGET) break;
-					}
-
-					if (toDrop.size > 0) {
-						payload.messages = updatedMsgs.filter(
-							(_: any, i: number) => !toDrop.has(i),
-						);
-					}
-				}
-
-				// ── Step 3: Extract entities + claims ──
-				if (_4bAvailable && latestQuery !== "(unknown)") {
-					try {
-						const result = await analyzeWith4BModel(latestQuery, {
-							contextSummary: `Session has ${updatedMsgs.length} chunks (~${estimateTokens(updatedMsgs)} tokens)`,
-						});
-						if (result) {
-							(globalThis as any).__pendingEntityLabels =
-								result.extracted_entities.map((e: any) => e.name);
-							(globalThis as any).__pendingClaimInputs =
-								result.extracted_claims.map((c: any) => ({
-									content: `${c.subject} ${c.relationship} ${c.object}`,
-									confidence: c.confidence,
-									entities: [c.subject, c.object],
-									relationship: c.relationship,
-									category: c.category,
-								}));
-
-							const entityInputs = result.extracted_entities.map((e: any) => ({
-								label: e.name,
-								tags: [...(e.tags || []), e.type],
-								confidence: e.confidence,
-							}));
-							if (entityInputs.length > 0) {
-								await ilo.createEntities(entityInputs).catch(() => {});
-							}
-
-							(globalThis as any).__lastExtractedLabels =
-								result.extracted_entities.map((e: any) => e.name);
-						}
-					} catch {
-						// Non-critical — extraction is best-effort
-					}
-				}
-			} catch (e) {
-				console.warn("[context] context rebuild failed:", e);
-			}
+			// Step 3: Extract entities + claims
+			const tok = estimateTokens(payload.messages);
+			await extractEntities(latestQuery, payload.messages.length, tok);
 		}
 
-		// Memory → system role conversion (ALWAYS runs, even on sub-requests)
-		for (const msg of payload.messages) {
-			if (msg.role === "memory") {
-				msg.role = "system";
-				if (msg.content && !msg.content.startsWith("[Memory Context]")) {
-					msg.content = `[Memory Context]\n${msg.content}`;
-				}
-			}
-		}
+		// Step 4: Memory → system role conversion (ALWAYS runs)
+		convertMemoryRoles(payload.messages);
 
 		return payload;
 	});
