@@ -14,17 +14,34 @@ pub async fn create_link(
 ) -> impl IntoResponse {
     let (from_id, to_id) = {
         let store = state.store.read().await;
-        let f_id = super::super::helpers::resolve_entity(&store, &req.from).await
-            .unwrap_or_else(|| uid("e"));
-        let t_id = super::super::helpers::resolve_entity(&store, &req.to).await
-            .unwrap_or_else(|| uid("e"));
+        let f_id = super::super::helpers::resolve_entity(&store, &req.from).await;
+        let t_id = super::super::helpers::resolve_entity(&store, &req.to).await;
         (f_id, t_id)
     };
+
+    // Create missing entities so the link doesn't point to a phantom node
+    let mut mutations = Vec::new();
+    let from_id = from_id.unwrap_or_else(|| {
+        let eid = uid("e");
+        mutations.push(StoreMutation::CreateNode {
+            id: eid.clone(), type_: NodeType::Entity,
+            tags: vec![], label: req.from.clone(), confidence: 0.3,
+        });
+        eid
+    });
+    let to_id = to_id.unwrap_or_else(|| {
+        let eid = uid("e");
+        mutations.push(StoreMutation::CreateNode {
+            id: eid.clone(), type_: NodeType::Entity,
+            tags: vec![], label: req.to.clone(), confidence: 0.3,
+        });
+        eid
+    });
 
     let lt = parse_link_type(req.r#type.as_deref());
     let rel_str = req.r#type.clone().unwrap_or_else(|| "relates".into());
     let lid = uid("l");
-    let mutations = vec![StoreMutation::CreateLink {
+    mutations.push(StoreMutation::CreateLink {
         id: lid.clone(),
         from: from_id.clone(),
         to: to_id.clone(),
@@ -33,7 +50,7 @@ pub async fn create_link(
         tags: vec![],
         weight: req.weight.unwrap_or(0.5),
         confidence: req.weight.unwrap_or(0.5),
-    }];
+    });
 
     match state.store.write().await.write_maintenance(mutations).await {
         Ok(()) => (StatusCode::OK, Json(LinkCreateResp {

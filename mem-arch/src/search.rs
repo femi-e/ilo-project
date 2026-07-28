@@ -13,7 +13,7 @@
 //! Both are rebuilt on every cache warm (on startup, after writes).
 //! At current scale (<1K entities) this is <1ms.
 
-use crate::types::*;
+use crate::types::{STOP_WORDS, *};
 use std::collections::HashMap;
 
 // ── Constants ───────────────────────────────────────────────────────
@@ -273,21 +273,6 @@ fn vector_norm(v: &[f32]) -> f32 {
     v.iter().map(|x| x * x).sum::<f32>().sqrt()
 }
 
-/// Common English stop words (sorted for binary_search).
-const STOP_WORDS: &[&str] = &[
-    "about", "after", "again", "all", "also", "am", "an", "and", "any",
-    "are", "as", "at", "be", "because", "been", "being", "but", "by",
-    "can", "could", "did", "do", "does", "done", "each", "few", "for",
-    "from", "had", "has", "have", "her", "here", "him", "his", "how",
-    "if", "in", "into", "is", "it", "its", "just", "like", "may", "me",
-    "more", "most", "much", "my", "no", "nor", "not", "now", "of", "on",
-    "one", "only", "or", "other", "our", "out", "over", "per", "said",
-    "same", "she", "should", "so", "some", "such", "than", "that", "the",
-    "their", "them", "then", "there", "these", "they", "this", "those",
-    "through", "to", "too", "under", "up", "upon", "very", "was", "way",
-    "we", "were", "what", "when", "where", "which", "while", "who",
-    "why", "will", "with", "would", "you",
-];
 
 #[cfg(test)]
 mod tests {

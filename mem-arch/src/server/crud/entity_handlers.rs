@@ -145,9 +145,8 @@ pub async fn update_entity(
         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "invalid id format"}))).into_response();
     }
 
-    let store = state.store.read().await;
+    let mut store = state.store.write().await;
     let existing = store.get_node(&id).await.unwrap_or(None);
-    drop(store);
 
     match existing {
         Some(_) => {
@@ -171,12 +170,10 @@ pub async fn update_entity(
                 }
                 let set_clause = raw_updates.join(", ");
                 let query = format!("MATCH (n:Node {{id: '{}'}}) SET {}", id.replace('\'', "''"), set_clause);
-                let store = state.store.read().await;
                 let _ = store.raw_query(&query).await;
-                drop(store);
             }
 
-            // Apply property updates
+            // Apply property updates (under same write lock)
             if let Some(props) = &req.properties {
                 for (k, v) in props {
                     mutations.push(StoreMutation::SetProperty {
@@ -186,7 +183,7 @@ pub async fn update_entity(
                         value: json_to_propvalue(v),
                     });
                 }
-                if let Err(e) = state.store.write().await.write_maintenance(mutations).await {
+                if let Err(e) = store.write_maintenance(mutations).await {
                     tracing::error!("update_entity properties write failed: {e}");
                     return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response();
                 }

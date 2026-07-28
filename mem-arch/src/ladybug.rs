@@ -217,94 +217,120 @@ fn exec_params(c: &Connection, query: &str, params: Vec<(&str, Value)>) -> Resul
 
 fn apply(c: &Connection, m: &StoreMutation) -> Result<(), StoreError> {
     match m {
-        StoreMutation::CreateNode { id, type_, tags, label, confidence } => {
-            exec_params(c, "CREATE (:Node {id: $id, type: $type, tags: $tags, label: $label, confidence: $confidence})", vec![
-                ("id", Value::String(id.clone())),
-                ("type", Value::String(type_.as_str().into())),
-                ("tags", tags_to_value(tags)),
-                ("label", Value::String(label.clone())),
-                ("confidence", Value::Double(*confidence)),
-            ])?;
-        }
-        StoreMutation::SetProperty { owner_id, owner_kind, key, value } => {
-            let pid = format!("{}::{}", owner_id, key);
-            let (kind, val) = pv(value);
-            let col = match kind.as_str() {
-                "str" => "val_str",
-                "float" => "val_float",
-                "int" => "val_int",
-                "bool" => "val_bool",
-                "json" => "val_json",
-                _ => "val_str",
-            };
-            exec_params(
-                c,
-                &format!("MERGE (p:Prop {{id: $pid}}) SET p.owner_id = $owner_id, p.owner_kind = $owner_kind, p.key = $key, p.kind = $kind, p.{} = $val", col),
-                vec![
-                    ("pid", Value::String(pid)),
-                    ("owner_id", Value::String(owner_id.clone())),
-                    ("owner_kind", Value::String(owner_kind.as_str().into())),
-                    ("key", Value::String(key.clone())),
-                    ("kind", Value::String(kind)),
-                    ("val", val),
-                ],
-            )?;
-        }
-        StoreMutation::DeleteProperty { owner_id, key } => {
-            exec_params(c, "MATCH (p:Prop) WHERE p.owner_id = $owner_id AND p.key = $key DELETE p", vec![
-                ("owner_id", Value::String(owner_id.clone())),
-                ("key", Value::String(key.clone())),
-            ])?;
-        }
-        StoreMutation::CreateLink { id, from, to, type_, rel, tags, weight, confidence } => {
-            // Try with `rel` column (new schema), fall back to old schema if column missing
-            let result = exec_params(c, "MATCH (a:Node {id: $from}), (b:Node {id: $to}) CREATE (a)-[:LINK {id: $lid, type: $type, rel: $rel, tags: $tags, weight: $weight, confidence: $confidence}]->(b)", vec![
-                ("from", Value::String(from.clone())),
-                ("to", Value::String(to.clone())),
-                ("lid", Value::String(id.clone())),
-                ("type", Value::String(type_.as_str().into())),
-                ("rel", Value::String(rel.clone())),
-                ("tags", tags_to_value(tags)),
-                ("weight", Value::Double(*weight)),
-                ("confidence", Value::Double(*confidence)),
-            ]);
-            match result {
-                Ok(()) => {},
-                Err(e) if e.to_string().contains("Cannot find property rel") => {
-                    // Old schema without `rel` column — create without it
-                    exec_params(c, "MATCH (a:Node {id: $from}), (b:Node {id: $to}) CREATE (a)-[:LINK {id: $lid, type: $type, tags: $tags, weight: $weight, confidence: $confidence}]->(b)", vec![
-                        ("from", Value::String(from.clone())),
-                        ("to", Value::String(to.clone())),
-                        ("lid", Value::String(id.clone())),
-                        ("type", Value::String(type_.as_str().into())),
-                        ("tags", tags_to_value(tags)),
-                        ("weight", Value::Double(*weight)),
-                        ("confidence", Value::Double(*confidence)),
-                    ])?;
-                },
-                Err(e) => return Err(e),
-            }
-        }
-        StoreMutation::UpdateLinkWeight { id, weight } => {
-            exec_params(c, "MATCH ()-[l:LINK {id: $id}]->() SET l.weight = $weight", vec![
-                ("id", Value::String(id.clone())),
-                ("weight", Value::Double(*weight)),
-            ])?;
-        }
-        StoreMutation::DeleteLink { id } => {
-            exec_params(c, "MATCH ()-[l:LINK {id: $id}]->() DELETE l", vec![
-                ("id", Value::String(id.clone())),
-            ])?;
-        }
-        StoreMutation::DeleteNode { id } => {
-            exec_params(c, "MATCH (p:Prop) WHERE p.owner_id = $owner_id DELETE p", vec![
-                ("owner_id", Value::String(id.clone())),
-            ])?;
-            exec_params(c, "MATCH (n:Node {id: $id}) DETACH DELETE n", vec![
-                ("id", Value::String(id.clone())),
-            ])?;
-        }
+        StoreMutation::CreateNode { id, type_, tags, label, confidence } =>
+            apply_create_node(c, id, type_, tags, label, *confidence),
+        StoreMutation::SetProperty { owner_id, owner_kind, key, value } =>
+            apply_set_property(c, owner_id, owner_kind, key, value),
+        StoreMutation::DeleteProperty { owner_id, key } =>
+            apply_delete_property(c, owner_id, key),
+        StoreMutation::CreateLink { id, from, to, type_, rel, tags, weight, confidence } =>
+            apply_create_link(c, id, from, to, type_, rel, tags, *weight, *confidence),
+        StoreMutation::UpdateLinkWeight { id, weight } =>
+            apply_update_link_weight(c, id, *weight),
+        StoreMutation::DeleteLink { id } =>
+            apply_delete_link(c, id),
+        StoreMutation::DeleteNode { id } =>
+            apply_delete_node(c, id),
     }
+}
+
+fn apply_create_node(c: &Connection, id: &str, type_: &NodeType, tags: &[String], label: &str, confidence: f64) -> Result<(), StoreError> {
+    exec_params(c, "CREATE (:Node {id: $id, type: $type, tags: $tags, label: $label, confidence: $confidence})", vec![
+        ("id", Value::String(id.into())),
+        ("type", Value::String(type_.as_str().into())),
+        ("tags", tags_to_value(tags)),
+        ("label", Value::String(label.into())),
+        ("confidence", Value::Double(confidence)),
+    ])?;
+    Ok(())
+}
+
+fn apply_set_property(c: &Connection, owner_id: &str, owner_kind: &OwnerKind, key: &str, value: &PropValue) -> Result<(), StoreError> {
+    let pid = format!("{}::{}", owner_id, key);
+    let (kind, val) = pv(value);
+    let col = match kind.as_str() {
+        "str" => "val_str",
+        "float" => "val_float",
+        "int" => "val_int",
+        "bool" => "val_bool",
+        "json" => "val_json",
+        _ => "val_str",
+    };
+    exec_params(
+        c,
+        &format!("MERGE (p:Prop {{id: $pid}}) SET p.owner_id = $owner_id, p.owner_kind = $owner_kind, p.key = $key, p.kind = $kind, p.{} = $val", col),
+        vec![
+            ("pid", Value::String(pid)),
+            ("owner_id", Value::String(owner_id.into())),
+            ("owner_kind", Value::String(owner_kind.as_str().into())),
+            ("key", Value::String(key.into())),
+            ("kind", Value::String(kind)),
+            ("val", val),
+        ],
+    )?;
+    Ok(())
+}
+
+fn apply_delete_property(c: &Connection, owner_id: &str, key: &str) -> Result<(), StoreError> {
+    exec_params(c, "MATCH (p:Prop) WHERE p.owner_id = $owner_id AND p.key = $key DELETE p", vec![
+        ("owner_id", Value::String(owner_id.into())),
+        ("key", Value::String(key.into())),
+    ])?;
+    Ok(())
+}
+
+fn apply_create_link(c: &Connection, id: &str, from: &str, to: &str, type_: &LinkType, rel: &str, tags: &[String], weight: f64, confidence: f64) -> Result<(), StoreError> {
+    let result = exec_params(c, "MATCH (a:Node {id: $from}), (b:Node {id: $to}) CREATE (a)-[:LINK {id: $lid, type: $type, rel: $rel, tags: $tags, weight: $weight, confidence: $confidence}]->(b)", vec![
+        ("from", Value::String(from.into())),
+        ("to", Value::String(to.into())),
+        ("lid", Value::String(id.into())),
+        ("type", Value::String(type_.as_str().into())),
+        ("rel", Value::String(rel.into())),
+        ("tags", tags_to_value(tags)),
+        ("weight", Value::Double(weight)),
+        ("confidence", Value::Double(confidence)),
+    ]);
+    match result {
+        Ok(()) => {},
+        Err(e) if e.to_string().contains("Cannot find property rel") => {
+            // Old schema without `rel` column — create without it
+            exec_params(c, "MATCH (a:Node {id: $from}), (b:Node {id: $to}) CREATE (a)-[:LINK {id: $lid, type: $type, tags: $tags, weight: $weight, confidence: $confidence}]->(b)", vec![
+                ("from", Value::String(from.into())),
+                ("to", Value::String(to.into())),
+                ("lid", Value::String(id.into())),
+                ("type", Value::String(type_.as_str().into())),
+                ("tags", tags_to_value(tags)),
+                ("weight", Value::Double(weight)),
+                ("confidence", Value::Double(confidence)),
+            ])?;
+        },
+        Err(e) => return Err(e),
+    }
+    Ok(())
+}
+
+fn apply_update_link_weight(c: &Connection, id: &str, weight: f64) -> Result<(), StoreError> {
+    exec_params(c, "MATCH ()-[l:LINK {id: $id}]->() SET l.weight = $weight", vec![
+        ("id", Value::String(id.into())),
+        ("weight", Value::Double(weight)),
+    ])?;
+    Ok(())
+}
+
+fn apply_delete_link(c: &Connection, id: &str) -> Result<(), StoreError> {
+    exec_params(c, "MATCH ()-[l:LINK {id: $id}]->() DELETE l", vec![
+        ("id", Value::String(id.into())),
+    ])?;
+    Ok(())
+}
+
+fn apply_delete_node(c: &Connection, id: &str) -> Result<(), StoreError> {
+    exec_params(c, "MATCH (p:Prop) WHERE p.owner_id = $owner_id DELETE p", vec![
+        ("owner_id", Value::String(id.into())),
+    ])?;
+    exec_params(c, "MATCH (n:Node {id: $id}) DETACH DELETE n", vec![
+        ("id", Value::String(id.into())),
+    ])?;
     Ok(())
 }
 
@@ -313,9 +339,15 @@ fn ts_from_value(v: &Value) -> chrono::NaiveDateTime {
         Value::String(s) => {
             // LadybugDB TIMESTAMP format: "2026-07-23 04:30:00"
             chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
-                .unwrap_or_else(|_| chrono::Utc::now().naive_utc())
+                .unwrap_or_else(|e| {
+                    tracing::warn!("Failed to parse timestamp '{}': {e}", s);
+                    chrono::Utc::now().naive_utc()
+                })
         },
-        _ => chrono::Utc::now().naive_utc(),
+        _ => {
+            tracing::warn!("Unexpected timestamp value type, using now()");
+            chrono::Utc::now().naive_utc()
+        },
     }
 }
 

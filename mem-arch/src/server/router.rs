@@ -57,7 +57,10 @@ pub async fn run_server(store: mem_arch::ladybug::LadybugStore, port: u16) {
         .route("/batch", post(crud::batch))
         .layer(Extension(state));
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let host = std::env::var("ILO_HOST").unwrap_or_else(|_| "127.0.0.1".into());
+    let addr: SocketAddr = format!("{}:{}", host, port)
+        .parse()
+        .expect("Invalid ILO_HOST or port");
     tracing::info!("Listening on {}", addr);
 
     if let Err(e) = axum::serve(

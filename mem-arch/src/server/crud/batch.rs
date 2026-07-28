@@ -44,9 +44,10 @@ pub async fn batch(
             }
         }
 
-        // Link to previous turn
-        if let Ok(ids) = state.store.read().await.find_nodes_by_type(&NodeType::Turn).await {
-            if let Some(prev) = ids.iter().last() {
+        // Link to previous turn (sorted by created_at for chronological ordering)
+        if let Ok(mut turns) = state.store.read().await.find_nodes_by_type(&NodeType::Turn).await {
+            turns.sort_by_key(|a| a.created_at);
+            if let Some(prev) = turns.last() {
                 mutations.push(StoreMutation::CreateLink {
                     id: uid("seq"), from: prev.id.clone(), to: turn_id.clone(),
                     type_: LinkType::Precedes, rel: String::new(),

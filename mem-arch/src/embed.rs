@@ -8,6 +8,7 @@
 //! All public functions are async, using `reqwest` for non-blocking HTTP.
 //! No longer requires `spawn_blocking` wrappers at call sites.
 
+use std::sync::OnceLock;
 use serde_json::Value;
 
 /// Base URL for the embedding server.
@@ -16,9 +17,17 @@ const EMBED_URL: &str = "http://127.0.0.1:1235/v1/embeddings";
 /// Default embedding dimension (bge-base-en-v1.5).
 const DEFAULT_DIM: usize = 768;
 
-/// Shared reqwest client (lazily created, connection-pooled).
-fn http_client() -> reqwest::Client {
-    reqwest::Client::new()
+/// Shared reqwest client — created once, reused across all calls.
+/// Connection pooling and keep-alive are managed internally by reqwest.
+fn http_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .expect("reqwest client build should succeed with default settings")
+    })
 }
 
 /// BGE instruction prefix for queries (improves retrieval quality).

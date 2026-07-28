@@ -17,9 +17,7 @@ const MAX_HOPS: u8 = 4;
 const MIN_SCORE: f64 = 0.02;
 const CONTEXT_BUDGET: usize = 8000;
 
-const STOP_WORDS: [&str; 28] = ["the","and","for","about","with","tell","what",
-    "how","why","when","are","but","not","all","can","has","had",
-    "was","were","its","their","you","your","just","also","very","too","than"];
+use crate::types::STOP_WORDS;
 
 pub async fn retrieve(
     query: &str,
