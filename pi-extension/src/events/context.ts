@@ -13,8 +13,6 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { recallMemory } from "../pipeline/recall";
-import { scoreAndEvict } from "../pipeline/score";
-import { extractEntities } from "../pipeline/extract";
 import { convertMemoryRoles } from "../pipeline/convert";
 
 let SYSTEM_INJECTED = false;
@@ -33,21 +31,6 @@ function findLatestUserQuery(msgs: any[]): string {
 		}
 	}
 	return "(unknown)";
-}
-
-/// Estimate tokens from a messages array.
-function estimateTokens(messages: any[]): number {
-	let total = 0;
-	for (const msg of messages) {
-		const content = msg.content;
-		if (typeof content === "string") total += content.length;
-		else if (Array.isArray(content)) {
-			for (const item of content) {
-				if (item?.text) total += item.text.length;
-			}
-		}
-	}
-	return Math.round(total / 4);
 }
 
 const SYSTEM_PROMPT = `# Identity
@@ -108,33 +91,6 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 	// during tool execution). Steps 1-3 only run once per user turn.
 	let _pipelineRanForQuery: string | null = null;
 
-	// ── Auto-detect: skip eviction on cloud APIs ─────────────────
-	// When the model talks to a remote API (not localhost), skip the expensive
-	// extraction + eviction steps. Local models get the full pipeline.
-	// Can be overridden with ILO_DISABLE_EVICTION=true/false.
-	function shouldDisableEviction(ctx: any): boolean {
-		const envOverride = process.env.ILO_DISABLE_EVICTION;
-		if (envOverride === "true" || envOverride === "1") return true;
-		if (envOverride === "false" || envOverride === "0") return false;
-
-		// Auto-detect: if the model connects to localhost, it is local.
-		// Cloud APIs (Anthropic, OpenAI, etc.) mean we skip eviction.
-		try {
-			const model = (ctx as any)?.model;
-			if (model) {
-				const baseUrl = model.baseUrl || "";
-				const isLocal =
-					baseUrl.includes("localhost") ||
-					baseUrl.includes("127.0.0.1") ||
-					baseUrl.includes("::1");
-				return !isLocal;
-			}
-		} catch {
-			// If we can't detect, default to enabled (local assumption)
-		}
-		return false;
-	}
-
 	pi.on("before_provider_request", async (event: any, _ctx: any) => {
 		const payload = event.payload;
 		const msgs = payload?.messages;
@@ -149,29 +105,11 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 		if (isNewTurn) {
 			_pipelineRanForQuery = latestQuery;
 
-			// Step 1: Recall memory from ILO (always runs — cheap, just graph queries)
+			// Step 1: Recall memory from ILO (cheap graph queries, always runs)
 			await recallMemory(msgs, latestQuery);
 
-			if (!shouldDisableEviction(_ctx)) {
-				const BUDGET = 80000;
-				const tok = estimateTokens(payload.messages);
-
-				// Step 2: Extract entities + claims via 4B model
-				const extraction = await extractEntities(
-					latestQuery,
-					payload.messages.length,
-					tok,
-				);
-
-				// Step 3: Score + evict using entity-type attention
-				const evictedMsgs = await scoreAndEvict(
-					payload.messages,
-					latestQuery,
-					BUDGET,
-					extraction?.entityInfos ?? null,
-				);
-				payload.messages = evictedMsgs;
-			}
+			// Extraction + eviction removed — evaluating GLiNER vs 4B approach.
+			// Will be re-added once extraction model is decided.
 		}
 
 		// Step 4: Memory → system role conversion (ALWAYS runs)
