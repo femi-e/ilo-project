@@ -24,7 +24,10 @@ export async function scoreAndEvict(
 
 	// Determine per-chunk model scores (or recency-only fallback)
 	const rawScores: number[] = chunkScores
-		? chunkInfo.map((_, i) => chunkScores[String(i)] ?? chunkScores[i] ?? i / chunkInfo.length)
+		? chunkInfo.map(
+				(_, i) =>
+					chunkScores[String(i)] ?? chunkScores[i] ?? i / chunkInfo.length,
+			)
 		: chunkInfo.map((_, i) => i / chunkInfo.length);
 
 	// Composite scoring: 0.5 × model + 0.3 × recency + 0.2 × overlap
@@ -52,14 +55,14 @@ export async function scoreAndEvict(
 		}
 	}
 
-	// Drop lowest-scored until within budget
+	// Always drop low-scored chunks (score < 0.4), then keep dropping the
+	// lowest remaining until we're under the token budget.
 	const droppable = scored
-		.filter((s) => !alwaysKeep.has(s.idx) && s.score < 0.4)
+		.filter((s) => !alwaysKeep.has(s.idx))
 		.sort((a, b) => a.score - b.score);
 
 	const toDrop = new Set<number>();
 	for (const s of droppable) {
-		if (alwaysKeep.has(s.idx)) continue;
 		toDrop.add(s.idx);
 		const remaining = messages.filter((_: any, i: number) => !toDrop.has(i));
 		if (estimateTokens(remaining) <= budget) break;

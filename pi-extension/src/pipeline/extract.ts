@@ -3,7 +3,10 @@
 // The chunk scores are used by score.ts for eviction — this replaces the
 // separate scoreChunksWith4BModel call, cutting 4B latency in half.
 
-import { analyzeWith4BModel, is4BModelAvailable } from "../client/context-rebuild-llm";
+import {
+	analyzeWith4BModel,
+	is4BModelAvailable,
+} from "../client/context-rebuild-llm";
 import { ilo } from "../client/ilo-client";
 
 // Re-export availability check
@@ -18,12 +21,14 @@ export async function extractEntities(
 	latestQuery: string,
 	msgCount: number,
 	estimatedTokens: number,
+	chunkPreviews?: string[],
 ): Promise<ExtractionResult | null> {
 	if (!latestQuery || latestQuery === "(unknown)") return null;
 
 	try {
 		const result = await analyzeWith4BModel(latestQuery, {
 			contextSummary: `Session has ${msgCount} chunks (~${estimatedTokens} tokens)`,
+			chunkPreviews,
 		});
 		if (!result) return null;
 
@@ -57,9 +62,10 @@ export async function extractEntities(
 		);
 
 		return {
-			chunkScores: Object.keys(result.chunk_scores).length > 0
-				? result.chunk_scores
-				: null,
+			chunkScores:
+				Object.keys(result.chunk_scores).length > 0
+					? result.chunk_scores
+					: null,
 			entityLabels: result.extracted_entities.map((e: any) => e.name),
 		};
 	} catch {
