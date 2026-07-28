@@ -55,8 +55,9 @@ export async function scoreAndEvict(
 		}
 	}
 
-	// Always drop low-scored chunks (score < 0.4), then keep dropping the
-	// lowest remaining until we're under the token budget.
+	const initialTokens = estimateTokens(messages);
+
+	// Always drop the lowest-scored chunks until under budget.
 	const droppable = scored
 		.filter((s) => !alwaysKeep.has(s.idx))
 		.sort((a, b) => a.score - b.score);
@@ -67,6 +68,16 @@ export async function scoreAndEvict(
 		const remaining = messages.filter((_: any, i: number) => !toDrop.has(i));
 		if (estimateTokens(remaining) <= budget) break;
 	}
+
+	const finalTokens = estimateTokens(
+		messages.filter((_: any, i: number) => !toDrop.has(i)),
+	);
+
+	console.error(
+		`[context] Tokens: ${initialTokens} → ${finalTokens}/${budget}, ` +
+			`chunks: ${messages.length} → ${messages.length - toDrop.size} ` +
+			`(dropped ${toDrop.size})`,
+	);
 
 	if (toDrop.size === 0) return messages;
 	return messages.filter((_: any, i: number) => !toDrop.has(i));

@@ -8,10 +8,9 @@
 import { fileURLToPath } from "node:url";
 import * as path from "node:path";
 
-/** Root project directory (ilo/). From lib/ up 4 levels. */
+/** Root project directory (ilo/). From pi-extension/src/lifecycle/ up 3 levels. */
 export const EXTENSION_DIR = path.resolve(
 	fileURLToPath(new URL(".", import.meta.url)),
-	"..",
 	"..",
 	"..",
 	"..",

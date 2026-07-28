@@ -10,7 +10,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import * as os from "node:os";
-import { ilo } from "./ilo-client";
+import { ilo } from "../client/ilo-client";
 import {
 	EXTENSION_DIR,
 	EXT_VAR_DIR,

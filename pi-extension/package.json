@@ -4,8 +4,15 @@
   "private": true,
   "type": "module",
   "description": "ILO: Cognitive memory runtime — pi extension for persistent graph memory",
-  "keywords": ["pi-package"],
+  "keywords": [
+    "pi-package"
+  ],
   "pi": {
-    "extensions": ["./src/index.ts"]
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2"
   }
 }
