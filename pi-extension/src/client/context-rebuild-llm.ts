@@ -13,7 +13,7 @@
 // structured JSON via tool calling or plain JSON output.
 // ============================================================================
 
-import { LOCAL_CHAT_PORT_START } from "./constants";
+import { LOCAL_CHAT_PORT_START } from "../lifecycle/constants";
 
 // ── Default 4B model port (LOCAL_CHAT_PORT_START + 2 = 1236) ──
 const _4B_PORT = parseInt(

@@ -11,15 +11,15 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerContextHooks } from "./events/context";
 import { registerTurnHooks } from "./events/turn";
-import { registerInputHooks } from "./events/input";
+import { registerInputHooks } from "./events/hooks";
 import {
 	startIlo,
 	stopIlo,
 	keepChatAlive,
 	setRegisteredProviders,
 	setUnregisterProviderCallback,
-} from "./lib/ilo-manager";
-import { registerIloTools } from "./lib/ilo-tools";
+} from "./lifecycle/manager";
+import { registerIloTools } from "./tools/memory-tools";
 // Web tools disabled — pi-web-access provides better versions
 // import { registerWebSearchTool } from './tools/web-search';
 // import { registerWebScrapeTool } from './tools/web-scrape';
@@ -31,7 +31,7 @@ import {
 	LOCAL_CHAT_PORT_START,
 	LOCAL_CHAT_PORT_END,
 	LOCAL_EMBED_PORT,
-} from "./lib/constants";
+} from "./lifecycle/constants";
 
 export default async function (pi: ExtensionAPI): Promise<void> {
 	// ── Register interaction loop hooks ────────────────

@@ -549,6 +549,9 @@ fn claim_extract(text: &str, entities: &[ExtractedEntity]) -> Vec<ExtractedClaim
     claims
 }
 
+#[deprecated(
+    note = "Use the 4B model extraction via analyzeWith4BModel() instead. The heuristic extractor is a low-quality fallback."
+)]
 pub fn extract(text: &str, graph: &HashMap<String, (f64, Vec<String>)>) -> ExtractionResult {
     if text.trim().is_empty() {
         return ExtractionResult {

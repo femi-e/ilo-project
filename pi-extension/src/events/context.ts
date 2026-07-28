@@ -3,8 +3,8 @@ import {
 	analyzeWith4BModel,
 	scoreChunksWith4BModel,
 	is4BModelAvailable,
-} from "../lib/context-rebuild-llm";
-import { ilo } from "../lib/ilo-client";
+} from "../client/context-rebuild-llm";
+import { ilo } from "../client/ilo-client";
 
 const SYSTEM_PROMPT = `# Identity
 
@@ -120,7 +120,9 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 		if (!msgs || msgs.length === 0) return;
 
 		const latestQuery = findLatestUserQuery(msgs);
-		const isNewTurn = latestQuery && latestQuery !== "(unknown)" &&
+		const isNewTurn =
+			latestQuery &&
+			latestQuery !== "(unknown)" &&
 			latestQuery !== _pipelineRanForQuery;
 
 		if (isNewTurn) {
@@ -158,17 +160,39 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 					preview: extractPreview(m),
 				}));
 
+				// Extract query words for entity overlap scoring
+				const queryWords = latestQuery
+					.toLowerCase()
+					.split(/\s+/)
+					.filter((w: string) => w.length > 2);
+
 				if (!_4bChecked) {
 					_4bAvailable = await is4BModelAvailable();
 					_4bChecked = true;
 				}
 
-				const modelScores = _4bAvailable
+				// Get model scores (or use recency-only fallback when 4B is off)
+				const rawScores = _4bAvailable
 					? await scoreChunksWith4BModel(chunkInfo, latestQuery)
-					: null;
+					: chunkInfo.map((_: any, i: number) => i / chunkInfo.length);
 
-				if (modelScores) {
-					const scored = modelScores.map((s, i) => ({ idx: i, score: s }));
+				if (rawScores) {
+					// Composite: 0.5 × model + 0.3 × recency + 0.2 × entity_overlap
+					const scored = rawScores.map((s: number, i: number) => {
+						const recency =
+							chunkInfo.length > 1 ? i / (chunkInfo.length - 1) : 1.0;
+						const entityOverlap =
+							queryWords.length > 0
+								? queryWords.filter((w: string) =>
+										chunkInfo[i].preview.toLowerCase().includes(w),
+									).length / queryWords.length
+								: 0;
+						return {
+							idx: i,
+							score: 0.5 * s + 0.3 * recency + 0.2 * entityOverlap,
+						};
+					});
+
 					const alwaysKeep = new Set<number>();
 					alwaysKeep.add(updatedMsgs.length - 1);
 					for (let i = updatedMsgs.length - 2; i >= 0; i--) {
@@ -179,7 +203,7 @@ export function registerContextHooks(pi: ExtensionAPI): void {
 					}
 
 					const droppable = scored
-						.filter((s) => !alwaysKeep.has(s.idx) && s.score < 0.5)
+						.filter((s) => !alwaysKeep.has(s.idx) && s.score < 0.4)
 						.sort((a, b) => a.score - b.score);
 
 					const toDrop = new Set<number>();

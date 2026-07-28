@@ -4,7 +4,7 @@
 
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
-import { ilo } from '../lib/ilo-client';
+import { ilo } from '../client/ilo-client';
 
 export function registerDiagnosticsTool(api: ExtensionAPI): void {
   api.registerTool({

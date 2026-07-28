@@ -8,8 +8,8 @@
 // ============================================================================
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { ilo } from "../lib/ilo-client";
-import { ensureIlo } from "../lib/ilo-manager";
+import { ilo } from "../client/ilo-client";
+import { ensureIlo } from "../lifecycle/manager";
 
 // ── In-memory state (survives /reload) ────────────────
 

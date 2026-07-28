@@ -17,7 +17,7 @@ import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
-import { ilo } from './ilo-client';
+import { ilo } from '../client/ilo-client';
 
 const asyncExec = promisify(exec);
 const GIT_TIMEOUT = 10000;

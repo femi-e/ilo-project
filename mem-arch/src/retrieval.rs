@@ -157,6 +157,23 @@ async fn find_seeds(
             }).collect();
         }
     }
+
+    // Phase 4: Always include the "user" entity if it exists (identity persistence)
+    if let Ok(nodes) = store.find_nodes(&NodeQuery {
+        type_: Some(NodeType::Entity),
+        tags: vec!["user".into()],
+        label_contains: Some("user".into()),
+        limit: 1,
+    }).await {
+        if let Some(user) = nodes.first() {
+            return vec![Seed {
+                node_id: user.id.clone(),
+                match_score: 1.0,
+                label: user.label.clone(),
+            }];
+        }
+    }
+
     vec![]
 }
 
