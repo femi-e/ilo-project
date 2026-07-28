@@ -4,103 +4,48 @@ pub type NodeId = String;
 pub type LinkId = String;
 pub type PropId = String;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub enum NodeType {
-    Entity,
-    Claim,
-    Turn,
-}
-impl NodeType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            NodeType::Entity => "entity",
-            NodeType::Claim => "claim",
-            NodeType::Turn => "turn",
+/// Macro: enum + `as_str()` + `FromStr` from explicit variant→string mappings.
+/// Usage: NodeType { Entity => "entity", Claim => "claim", ... }
+macro_rules! string_enum {
+    ($(#[$meta:meta])* $vis:vis enum $name:ident { $($variant:ident => $str:literal),+ $(,)? }) => {
+        $(#[$meta])*
+        $vis enum $name { $($variant,)+ }
+        impl $name {
+            #[allow(dead_code)]
+            $vis fn as_str(&self) -> &'static str {
+                match self { $(Self::$variant => $str,)+ }
+            }
         }
-    }
-}
-impl std::str::FromStr for NodeType {
-    type Err = ();
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "entity" => Ok(NodeType::Entity),
-            "claim" => Ok(NodeType::Claim),
-            "turn" => Ok(NodeType::Turn),
-            _ => Err(()),
+        impl std::str::FromStr for $name {
+            type Err = ();
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                match s { $($str => Ok(Self::$variant),)+ _ => Err(()) }
+            }
         }
+    };
+}
+
+string_enum! {
+    #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+    pub enum NodeType { Entity => "entity", Claim => "claim", Turn => "turn" }
+}
+
+string_enum! {
+    #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+    pub enum LinkType {
+        Depends => "depends",
+        Intends => "intends",
+        Implements => "implements",
+        Contains => "contains",
+        Relates => "relates",
+        References => "references",
+        Precedes => "precedes",
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub enum LinkType {
-    Depends,
-    Intends,
-    Implements,
-    Contains,
-    Relates,
-    References,
-    Precedes,
-}
-impl LinkType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            LinkType::Depends => "depends",
-            LinkType::Intends => "intends",
-            LinkType::Implements => "implements",
-            LinkType::Contains => "contains",
-            LinkType::Relates => "relates",
-            LinkType::References => "references",
-            LinkType::Precedes => "precedes",
-        }
-    }
-}
-impl std::str::FromStr for LinkType {
-    type Err = ();
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "depends" => Ok(LinkType::Depends),
-            "intends" => Ok(LinkType::Intends),
-            "implements" => Ok(LinkType::Implements),
-            "contains" => Ok(LinkType::Contains),
-            "relates" => Ok(LinkType::Relates),
-            "references" => Ok(LinkType::References),
-            "precedes" => Ok(LinkType::Precedes),
-            _ => Err(()),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum PropKind {
-    String,
-    Float,
-    Int,
-    Bool,
-    Json,
-}
-impl PropKind {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            PropKind::String => "string",
-            PropKind::Float => "float",
-            PropKind::Int => "int",
-            PropKind::Bool => "bool",
-            PropKind::Json => "json",
-        }
-    }
-}
-impl std::str::FromStr for PropKind {
-    type Err = ();
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "string" => Ok(PropKind::String),
-            "float" => Ok(PropKind::Float),
-            "int" => Ok(PropKind::Int),
-            "bool" => Ok(PropKind::Bool),
-            "json" => Ok(PropKind::Json),
-            _ => Err(()),
-        }
-    }
+string_enum! {
+    #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+    pub enum PropKind { String => "string", Float => "float", Int => "int", Bool => "bool", Json => "json" }
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -123,28 +68,9 @@ impl PropValue {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum OwnerKind {
-    Node,
-    Link,
-}
-impl OwnerKind {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            OwnerKind::Node => "node",
-            OwnerKind::Link => "link",
-        }
-    }
-}
-impl std::str::FromStr for OwnerKind {
-    type Err = ();
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "node" => Ok(OwnerKind::Node),
-            "link" => Ok(OwnerKind::Link),
-            _ => Err(()),
-        }
-    }
+string_enum! {
+    #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+    pub enum OwnerKind { Node => "node", Link => "link" }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -319,17 +245,14 @@ impl From<lbug::Error> for StoreError {
 
 /// Common English stop words filtered out during FTS tokenization and retrieval seed finding.
 pub const STOP_WORDS: &[&str] = &[
-    "about", "after", "again", "all", "also", "am", "an", "and", "any",
-    "are", "as", "at", "be", "because", "been", "being", "but", "by",
-    "can", "could", "did", "do", "does", "done", "each", "few", "for",
-    "from", "had", "has", "have", "her", "here", "him", "his", "how",
-    "if", "in", "into", "is", "it", "its", "just", "like", "may", "me",
-    "more", "most", "much", "my", "no", "nor", "not", "now", "of", "on",
-    "one", "only", "or", "other", "our", "out", "over", "per", "said",
-    "same", "she", "should", "so", "some", "such", "than", "that", "the",
-    "their", "them", "then", "there", "these", "they", "this", "those",
-    "through", "to", "too", "under", "up", "upon", "very", "was", "way",
-    "we", "were", "what", "when", "where", "which", "while", "who",
+    "about", "after", "again", "all", "also", "am", "an", "and", "any", "are", "as", "at", "be",
+    "because", "been", "being", "but", "by", "can", "could", "did", "do", "does", "done", "each",
+    "few", "for", "from", "had", "has", "have", "her", "here", "him", "his", "how", "if", "in",
+    "into", "is", "it", "its", "just", "like", "may", "me", "more", "most", "much", "my", "no",
+    "nor", "not", "now", "of", "on", "one", "only", "or", "other", "our", "out", "over", "per",
+    "said", "same", "she", "should", "so", "some", "such", "than", "that", "the", "their", "them",
+    "then", "there", "these", "they", "this", "those", "through", "to", "too", "under", "up",
+    "upon", "very", "was", "way", "we", "were", "what", "when", "where", "which", "while", "who",
     "why", "will", "with", "would", "you",
 ];
 

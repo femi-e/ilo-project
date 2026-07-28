@@ -18,8 +18,8 @@ use std::collections::HashMap;
 
 // ── Constants ───────────────────────────────────────────────────────
 
-const K1: f64 = 1.2;   // BM25 saturation
-const B: f64 = 0.75;   // BM25 length normalization
+const K1: f64 = 1.2; // BM25 saturation
+const B: f64 = 0.75; // BM25 length normalization
 const MIN_TERM_LEN: usize = 2;
 
 /// In-memory search index rebuilt from the node cache.
@@ -77,7 +77,8 @@ impl SearchIndex {
             }
 
             for (term, tf) in term_count {
-                inverted_index.entry(term.clone())
+                inverted_index
+                    .entry(term.clone())
                     .or_default()
                     .push((node.id.clone(), tf));
                 *df.entry(term).or_insert(0.0) += 1.0;
@@ -124,7 +125,9 @@ impl SearchIndex {
                 let idf = ((self.total_docs as f64 - df_term + 0.5) / (df_term + 0.5) + 1.0).ln();
 
                 for (node_id, tf) in postings {
-                    let label_len = self.labels.get(node_id)
+                    let label_len = self
+                        .labels
+                        .get(node_id)
                         .map(|l| l.len() as f64)
                         .unwrap_or(self.avg_label_len);
                     let norm = 1.0 - B + B * (label_len / self.avg_label_len);
@@ -143,7 +146,8 @@ impl SearchIndex {
         }
 
         // Sort by score descending, take top N
-        let mut results: Vec<(f64, &NodeId, &str)> = scores.iter()
+        let mut results: Vec<(f64, &NodeId, &str)> = scores
+            .iter()
             .map(|(id, (score, label))| (*score, id, *label))
             .collect();
         results.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
@@ -151,7 +155,8 @@ impl SearchIndex {
         let top_score = results.first().map(|r| r.0).unwrap_or(1.0);
         let top_score = if top_score > 0.0 { top_score } else { 1.0 };
 
-        results.into_iter()
+        results
+            .into_iter()
             .take(limit)
             .map(|(score, id, label)| Seed {
                 node_id: id.clone(),
@@ -178,7 +183,8 @@ impl SearchIndex {
         let mut results: Vec<(f64, &NodeId)> = Vec::new();
 
         for (node_id, node_emb) in &self.embeddings {
-            let dot: f32 = query_emb.iter()
+            let dot: f32 = query_emb
+                .iter()
                 .zip(node_emb.iter())
                 .map(|(a, b)| a * b)
                 .sum();
@@ -195,7 +201,8 @@ impl SearchIndex {
 
         results.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
-        results.into_iter()
+        results
+            .into_iter()
             .take(limit)
             .map(|(score, id)| Seed {
                 node_id: id.clone(),
@@ -227,9 +234,8 @@ impl SearchIndex {
     pub fn merge(&mut self, new_nodes: &[NodeRecord]) {
         // For now, just collect all existing nodes + new nodes and rebuild.
         // This is O(n) on every write, but n is tiny.
-        let mut all_nodes: Vec<NodeRecord> = Vec::with_capacity(
-            self.labels.len() + new_nodes.len()
-        );
+        let mut all_nodes: Vec<NodeRecord> =
+            Vec::with_capacity(self.labels.len() + new_nodes.len());
 
         for (id, label) in &self.labels {
             let confidence = self.confidences.get(id).copied().unwrap_or(0.5);
@@ -257,12 +263,18 @@ impl SearchIndex {
 /// Splits on whitespace/punctuation, drops short/stop words.
 fn tokenize(text: &str) -> Vec<String> {
     text.split_whitespace()
-        .flat_map(|w| w.split(&['.', ',', ';', ':', '!', '?', '(', ')', '[', ']', '{', '}', '"', '\'', '-', '_', '/', '\\'][..]))
+        .flat_map(|w| {
+            w.split(
+                &[
+                    '.', ',', ';', ':', '!', '?', '(', ')', '[', ']', '{', '}', '"', '\'', '-',
+                    '_', '/', '\\',
+                ][..],
+            )
+        })
         .map(|w| w.to_lowercase())
         .filter(|w| {
             let trimmed = w.trim();
-            trimmed.len() >= MIN_TERM_LEN
-                && !STOP_WORDS.contains(&trimmed)
+            trimmed.len() >= MIN_TERM_LEN && !STOP_WORDS.contains(&trimmed)
         })
         .map(|w| w.trim().to_string())
         .collect()
@@ -272,7 +284,6 @@ fn tokenize(text: &str) -> Vec<String> {
 fn vector_norm(v: &[f32]) -> f32 {
     v.iter().map(|x| x * x).sum::<f32>().sqrt()
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -318,9 +329,7 @@ mod tests {
 
     #[test]
     fn test_fts_returns_empty_for_no_match() {
-        let nodes = vec![
-            make_node("e_ailo", "Ailo", 0.9),
-        ];
+        let nodes = vec![make_node("e_ailo", "Ailo", 0.9)];
         let index = SearchIndex::build(&nodes);
         let results = index.search_fts("nonexistent", 5);
         assert!(results.is_empty());
