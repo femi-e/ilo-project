@@ -516,14 +516,8 @@ export function registerIloTools(api: ExtensionAPI): void {
 			const entityInputs = entities
 				.map((e: any) => ({
 					label: String(e.name || "").trim(),
-					tags: [
-						...(e.tags || []),
-						...(e.type ? [String(e.type)] : []),
-					],
-					confidence: Math.max(
-						0,
-						Math.min(1, Number(e.confidence) || 0.5),
-					),
+					tags: [...(e.tags || []), ...(e.type ? [String(e.type)] : [])],
+					confidence: Math.max(0, Math.min(1, Number(e.confidence) || 0.5)),
 				}))
 				.filter((e: any) => e.label.length > 0);
 
@@ -541,21 +535,14 @@ export function registerIloTools(api: ExtensionAPI): void {
 			if (validClaims.length > 0) {
 				const claimInputs = validClaims.map((c: any) => ({
 					content: `${c.subject} ${c.relationship} ${c.object}`,
-					confidence: Math.max(
-						0,
-						Math.min(1, Number(c.confidence) || 0.5),
-					),
+					confidence: Math.max(0, Math.min(1, Number(c.confidence) || 0.5)),
 					entities: [c.subject, c.object],
 				}));
-				const created = await ilo
-					.createClaims(claimInputs)
-					.catch(() => null);
+				const created = await ilo.createClaims(claimInputs).catch(() => null);
 				claimsCreated = created?.data?.count || 0;
 			}
 
-			const entitySummary = entityInputs
-				.map((e: any) => e.label)
-				.join(", ");
+			const entitySummary = entityInputs.map((e: any) => e.label).join(", ");
 
 			return {
 				content: [
@@ -572,7 +559,6 @@ export function registerIloTools(api: ExtensionAPI): void {
 			};
 		},
 	});
-				
 
 	// ═══════════════════════════════════════════════════════════════
 	// WEB TOOLS — internet access

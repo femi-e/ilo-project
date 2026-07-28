@@ -140,31 +140,13 @@ export async function startIlo(): Promise<boolean> {
 		allOk = false;
 	}
 
-	// ── Start chat server (best-effort, requires CHAT_MODEL_PATH) ──
-	if (CHAT_MODEL_PATH) {
-		const chatOk = await startChatServer();
-		if (!chatOk) {
-			console.warn(
-				"[ilo] Chat server failed to start — local inference unavailable",
-			);
-		}
-	} else {
-		console.warn(
-			"[ilo] No chat model configured — set LLAMA_CHAT_MODEL to auto-start a local LLM",
-		);
-		console.warn("[ilo] Example: LLAMA_CHAT_MODEL=~/models/qwen3.5-9b.gguf pi");
-	}
+	// ── Chat server is disabled — the 35B model is not auto-managed
+	// The user starts/stops the 35B MTPLX or llama-server manually.
+	// ──
 
-	// ── Start 4B context-rebuild model server ──
-	const _4bOk = await start4BModelServer();
-	if (!_4bOk) {
-		console.warn(
-			"[ilo] 4B context-rebuild model unavailable — set ILO_4B_MODEL_PATH or LLAMA_4B_MODEL",
-		);
-		console.warn(
-			"[ilo] Example: ILO_4B_MODEL_PATH=~/models/qwen3.5-35b-a3b/Qwen3.5-4B-Q4_K_M.gguf",
-		);
-	}
+	// ── 4B context-rebuild model server is disabled — replaced by memory_extract tool
+	// The agent handles extraction directly via tool calls to the 35B model.
+	// ──
 
 	// ── Start ILO sidecar ──
 	if (!fs.existsSync(ILO_BINARY)) {
