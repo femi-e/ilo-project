@@ -1,9 +1,9 @@
 {
   "name": "ilo-pi",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "ILO: Cognitive memory runtime — pi extension for persistent graph memory",
+  "description": "ILO: Cognitive memory runtime \u2014 pi extension for persistent graph memory",
   "keywords": [
     "pi-package"
   ],

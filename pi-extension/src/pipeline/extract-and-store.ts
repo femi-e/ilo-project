@@ -33,12 +33,10 @@ export interface ExtractionResult {
  * Build text from the last assistant turn + current user query.
  * Includes thinking, tool calls, tool results, and response text.
  */
-function buildExtractionText(
-	messages: any[],
-): string {
+function buildExtractionText(messages: any[]): string {
 	// Find the last assistant message and everything that preceded it
 	const parts: string[] = [];
-	
+
 	// Find the last user message index (current query)
 	let lastUserIdx = -1;
 	for (let i = messages.length - 1; i >= 0; i--) {
@@ -47,14 +45,14 @@ function buildExtractionText(
 			break;
 		}
 	}
-	
+
 	// Collect everything from the last assistant turn
 	// That's messages from lastUserIdx to the end
 	if (lastUserIdx >= 0) {
 		for (let i = lastUserIdx; i < messages.length; i++) {
 			const msg = messages[i];
 			const role = msg.role || "?";
-			
+
 			if (role === "user") {
 				const text = extractTextContent(msg);
 				if (text) parts.push(`User: ${text}`);
@@ -69,7 +67,7 @@ function buildExtractionText(
 							parts.push(`[Thinking: ${item.thinking.slice(0, 200)}]`);
 						} else if (item.type === "toolCall" || item.type === "tool_use") {
 							const name = item.name || "tool";
-							const args = item.arguments 
+							const args = item.arguments
 								? JSON.stringify(item.arguments).slice(0, 200)
 								: "";
 							parts.push(`[Tool: ${name}(${args})]`);
@@ -84,7 +82,7 @@ function buildExtractionText(
 			}
 		}
 	}
-	
+
 	return parts.join("\n");
 }
 

@@ -55,6 +55,7 @@ export interface ContextRebuildResult {
 			| "References"
 			| "Precedes";
 		confidence: number;
+		source_text?: string;
 	}>;
 }
 
@@ -67,12 +68,13 @@ Schema:
 {
   "chunk_scores": {},
   "extracted_entities": [{"name":"...","type":"...","confidence":0.0-1.0,"tags":["..."]}],
-  "extracted_claims": [{"subject":"a","relationship":"...","object":"b","category":"...","confidence":0.0-1.0}]
+  "extracted_claims": [{"subject":"a","relationship":"...","object":"b","category":"...","confidence":0.0-1.0,"source_text":"..."}]
 }
 
 Entity types: component|file|tool|service|concept|person|library|config|task|other
 Claim categories: Depends|Intends|Implements|Contains|Relates|References|Precedes
 
+Each claim must include a source_text field with the exact sentence supporting it.
 Confidence: 0.9+ direct mention, 0.5-0.8 strong implication, <0.5 weak signal. Be precise — only extract what's clearly present.`;
 
 // ── Build user prompt with query + optional context ─────────
@@ -251,6 +253,7 @@ function validateAndFill(raw: any): ContextRebuildResult {
 						? c.category
 						: "Relates",
 					confidence: clamp(Number(c.confidence) || 0.5, 0, 1),
+					source_text: c.source_text ? String(c.source_text) : undefined,
 				});
 			}
 		}
