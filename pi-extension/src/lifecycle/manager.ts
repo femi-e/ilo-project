@@ -11,10 +11,7 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import { ilo } from "../client/ilo-client";
-import {
-	EXT_VAR_DIR,
-	LOCAL_EMBED_PORT,
-} from "./constants";
+import { EXT_VAR_DIR, LOCAL_EMBED_PORT } from "./constants";
 
 const STATE_KEY = "__ailo_ilo_manager__";
 
@@ -121,7 +118,10 @@ function unregisterProviders(types: ("embed" | "chat")[]): void {
  * Wait for a process by PID to exit. Polls until the PID is gone or timeout.
  * Returns true if the process exited, false if it timed out.
  */
-async function waitForPidExit(pid: number, timeoutMs: number): Promise<boolean> {
+async function waitForPidExit(
+	pid: number,
+	timeoutMs: number,
+): Promise<boolean> {
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
 		try {
@@ -150,7 +150,9 @@ async function killProcessGracefully(
 
 	const exited = await waitForPidExit(pid, timeoutMs);
 	if (!exited) {
-		console.error(`[ilo] PID ${pid} did not exit within ${timeoutMs}ms, sending SIGKILL`);
+		console.error(
+			`[ilo] PID ${pid} did not exit within ${timeoutMs}ms, sending SIGKILL`,
+		);
 		try {
 			process.kill(pid, "SIGKILL");
 		} catch {
