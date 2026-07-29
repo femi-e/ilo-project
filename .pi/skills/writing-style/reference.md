@@ -2,6 +2,31 @@
 
 A personal style based on principles from ASD-STE100 Issue 9, adapted for general audience writing, cross referenced against plain language standards, and refined through iteration.
 
+## Contents
+
+- [Core Philosophy](#core-philosophy)
+- [Always Do These](#always-do-these)
+  - [Active Voice](#active-voice)
+  - [Short Sentences, Varied Length](#short-sentences-varied-length)
+  - [One Term for One Thing](#one-term-for-one-thing)
+  - [Short Words Over Long Ones](#short-words-over-long-ones)
+  - [Context Before Action](#context-before-action)
+  - [Build Gradually](#build-gradually)
+  - [Be Specific](#be-specific)
+  - [Explain Why](#explain-why)
+- [Use in Moderation](#use-in-moderation)
+  - [Contractions](#contractions)
+  - [Phrasal Verbs](#phrasal-verbs)
+  - [-ing Verb Forms](#-ing-verb-forms)
+  - [Perfect Tenses](#perfect-tenses-has-had-will-have)
+  - [Hedging](#hedging-might-could-may-possibly)
+  - [Semicolons](#semicolons)
+- [Rarely](#rarely)
+  - [Sentence Fragments](#sentence-fragments)
+  - [Em Dashes](#em-dashes)
+- [Putting It Together](#putting-it-together)
+- [Sources](#sources)
+
 ---
 
 ## Core Philosophy
