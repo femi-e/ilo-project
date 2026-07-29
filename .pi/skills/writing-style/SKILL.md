@@ -45,13 +45,32 @@ When this skill is loaded, read the full style guide at `reference.md` and apply
 
 ## Validation
 
-After writing, run a quick self-check before delivering output:
+Run the style checker after writing and before delivering output:
+
+```bash
+echo "<your text>" | python3 scripts/check-style.py
+```
+
+Or pipe from a file:
+
+```bash
+cat output.txt | python3 scripts/check-style.py
+```
+
+The script checks for:
+
+- Passive voice constructions
+- Hedging words (might, could, possibly)
+- Stacked "-ing" forms
+- Fancy vocabulary (utilize → use, commence → start)
+- Sentence length outliers
+
+Fix any issues the script flags, then re-run. Manual sanity check after:
 
 1. Does every sentence have an active subject doing the action?
 2. Are you using the same term for the same thing throughout?
-3. Any stacked "-ing" forms in one sentence?
-4. Did you hedge something you're actually certain about?
-5. Read the first two sentences aloud — do they flow naturally?
+3. Did you hedge something you're actually certain about?
+4. Read the first two sentences aloud — do they flow naturally?
 
 ## Reference
 
