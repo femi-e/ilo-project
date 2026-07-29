@@ -7,7 +7,7 @@ London, UK  |  <elegbede.oe@gmail.com>  |  07848 907400
 
 ## Professional Summary
 
-Data Analyst with a BSc in Computer Science and LSE Data Analytics training (expected September 2026). Three years of hospitality operations experience taught me to find patterns in data and turn them into real business decisions. I use Python, SQL, and Tableau to analyse data and deliver actionable recommendations.
+Data Analyst with a BSc in Computer Science and LSE Data Analytics training (expected September 2026). I bring three years of hands-on operational experience across luxury hospitality and a technical toolkit built around Python, SQL, and Tableau. I dig into real problems, find the patterns in the data, and turn them into decisions that affect actual operations. My recent project analysed 600,000 NHS appointment records to uncover what drives missed appointments and produced a recommendation that could save millions. I am looking for a role where I can apply that same analytical instinct to business problems that matter.
 
 ---
 
