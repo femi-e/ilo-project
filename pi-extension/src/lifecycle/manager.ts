@@ -12,10 +12,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import { ilo } from "../client/ilo-client";
 import {
-	EXTENSION_DIR,
 	EXT_VAR_DIR,
 	LOCAL_EMBED_PORT,
-	LOCAL_CHAT_PORT_START,
 } from "./constants";
 
 const STATE_KEY = "__ailo_ilo_manager__";
@@ -27,6 +25,8 @@ interface IloManagerState {
 	_4bProcess: ChildProcess | null;
 	startedAt: number;
 	restartCount: number;
+	/** True while stopIlo() is executing — prevents the exit handler from restarting. */
+	intentionalShutdown: boolean;
 	chatIdleTimer: ReturnType<typeof setTimeout> | null;
 	/** Provider names registered with pi for each server type. Unregistered on stop. */
 	registeredProviders: { embed: string[]; chat: string[] };
@@ -44,6 +44,7 @@ function getState(): IloManagerState {
 			_4bProcess: null,
 			startedAt: 0,
 			restartCount: 0,
+			intentionalShutdown: false,
 			chatIdleTimer: null,
 			registeredProviders: { embed: [], chat: [] },
 			unregisterProvider: null,
@@ -63,29 +64,19 @@ const ILO_DB_PATH =
 	process.env.ILO_DB_PATH || path.join(EXT_VAR_DIR, "ilo_data.lbug");
 const MAX_RESTARTS = 3;
 
+/** How long to wait (ms) for the old ILO process to exit before force-killing and starting fresh. */
+const OLD_PROCESS_WAIT_MS = parseInt(
+	process.env.ILO_SHUTDOWN_WAIT_MS || "5000",
+	10,
+);
+
+/** How long to poll (ms) for the old PID to disappear during restart. */
+const PID_POLL_INTERVAL_MS = 200;
+
 const LLAMA_SERVER_BINARY = process.env.LLAMA_SERVER_BINARY || "llama-server";
 const EMBED_MODEL_PATH =
 	process.env.EMBED_MODEL_PATH ||
 	path.join(os.homedir(), "models", "embeddings", "bge-base-en-v1.5-q8_0.gguf");
-
-/** GGUF model to use for the chat server. Set env LLAMA_CHAT_MODEL to override. */
-const CHAT_MODEL_PATH = process.env.LLAMA_CHAT_MODEL || "";
-
-/** How long to wait (ms) before stopping the chat server if the local model isn't selected. */
-const CHAT_IDLE_TIMEOUT = parseInt(
-	process.env.LOCAL_CHAT_IDLE_TIMEOUT || "300000",
-	10,
-); // 5 min default
-
-/** 4B model for context rebuild — MTPLX model ID. Set env ILO_4B_MODEL to override. */
-const _4B_MODEL_ID =
-	process.env.ILO_4B_MODEL || "Youssofal/Qwen3.5-4B-MTPLX-Optimized-Speed";
-
-/** 4B model server port (one past chat start = 1236). */
-const _4B_PORT = parseInt(
-	process.env.ILO_4B_PORT || String(LOCAL_CHAT_PORT_START + 2),
-	10,
-);
 
 // ── Provider registration tracking ───────────────────
 
@@ -124,6 +115,75 @@ function unregisterProviders(types: ("embed" | "chat")[]): void {
 	}
 }
 
+// ── Helpers ───────────────────────────────────────────
+
+/**
+ * Wait for a process by PID to exit. Polls until the PID is gone or timeout.
+ * Returns true if the process exited, false if it timed out.
+ */
+async function waitForPidExit(pid: number, timeoutMs: number): Promise<boolean> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		try {
+			// Sending signal 0 checks if the process exists without killing it
+			process.kill(pid, 0);
+		} catch {
+			// Process doesn't exist anymore
+			return true;
+		}
+		await new Promise((r) => setTimeout(r, PID_POLL_INTERVAL_MS));
+	}
+	return false;
+}
+
+/**
+ * Kill a process gracefully (SIGTERM), then wait for it to exit.
+ * If it doesn't exit within the timeout, send SIGKILL.
+ */
+async function killProcessGracefully(
+	proc: ChildProcess,
+	timeoutMs: number,
+): Promise<void> {
+	proc.kill("SIGTERM");
+	const pid = proc.pid;
+	if (pid === undefined) return;
+
+	const exited = await waitForPidExit(pid, timeoutMs);
+	if (!exited) {
+		console.error(`[ilo] PID ${pid} did not exit within ${timeoutMs}ms, sending SIGKILL`);
+		try {
+			process.kill(pid, "SIGKILL");
+		} catch {
+			// Already gone
+		}
+	}
+}
+
+/** Kill a child process by PID (from PID file). */
+async function killOldPid(pid: number, timeoutMs: number): Promise<void> {
+	try {
+		// Check if the process exists
+		process.kill(pid, 0);
+	} catch {
+		return; // Already gone
+	}
+
+	try {
+		process.kill(pid, "SIGTERM");
+	} catch {
+		return;
+	}
+
+	const exited = await waitForPidExit(pid, timeoutMs);
+	if (!exited) {
+		try {
+			process.kill(pid, "SIGKILL");
+		} catch {
+			// Already gone
+		}
+	}
+}
+
 // ── API ───────────────────────────────────────────────
 
 /** Start the ILO sidecar, embedding server, and chat server. */
@@ -155,22 +215,30 @@ export async function startIlo(): Promise<boolean> {
 		return false;
 	}
 
+	// Stop any existing tracked process and wait for it fully
 	if (state.iloProcess) {
 		try {
 			const res = await ilo.status();
 			if (res.ok) return allOk;
 		} catch {}
-		stopIlo();
+		await stopIlo();
 	}
 
+	// Wait for any old PID from a previous (untracked) instance to exit
 	const pidFile = path.join(EXT_VAR_DIR, "ilo.pid");
 	try {
 		const oldPid = parseInt(fs.readFileSync(pidFile, "utf-8"), 10);
-		try {
-			process.kill(oldPid, "SIGTERM");
-		} catch {}
-		await new Promise((r) => setTimeout(r, 1000));
-	} catch {}
+		if (oldPid > 0) {
+			await killOldPid(oldPid, OLD_PROCESS_WAIT_MS);
+		}
+	} catch {
+		// No PID file, nothing to wait for
+	}
+
+	// Also wait for the flock file to be released (old process may have exited
+	// but the OS may not have released the lock yet)
+	const lockFile = path.join(EXT_VAR_DIR, "ilo.lock");
+	await waitForFlockReleased(lockFile, OLD_PROCESS_WAIT_MS);
 
 	const socketPath = path.join(EXT_VAR_DIR, "ilo.sock");
 	try {
@@ -193,6 +261,7 @@ export async function startIlo(): Promise<boolean> {
 
 	state.iloProcess = proc;
 	state.startedAt = Date.now();
+	state.intentionalShutdown = false;
 	console.error("[ilo] starting sidecar...");
 
 	proc.stdout?.on("data", (d) => process.stdout.write(`[ilo] ${d}`));
@@ -208,7 +277,9 @@ export async function startIlo(): Promise<boolean> {
 		try {
 			fs.unlinkSync(pidFile);
 		} catch {}
-		if (state.restartCount < MAX_RESTARTS) {
+
+		// Only auto-restart on unexpected crash, not intentional shutdown
+		if (!state.intentionalShutdown && state.restartCount < MAX_RESTARTS) {
 			state.restartCount++;
 			console.error(
 				`[ilo] restarting (${state.restartCount}/${MAX_RESTARTS})...`,
@@ -230,6 +301,33 @@ export async function startIlo(): Promise<boolean> {
 
 	console.error("[ilo] failed to start within 3 seconds");
 	return false;
+}
+
+/**
+ * Wait for a flock file to no longer be held by any process.
+ * On macOS/Linux, a flock is released when the holding process exits.
+ * We check by trying to open the file for writing — if it succeeds without
+ * contention, the old lock has been released.
+ */
+async function waitForFlockReleased(
+	lockPath: string,
+	timeoutMs: number,
+): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		// If the lock file doesn't exist, there's no contention
+		if (!fs.existsSync(lockPath)) return;
+
+		// Try to open with exclusive access — if we succeed, the old lock is gone
+		try {
+			const fd = fs.openSync(lockPath, "wx");
+			fs.closeSync(fd);
+			return;
+		} catch {
+			// Lock still held, wait and retry
+			await new Promise((r) => setTimeout(r, PID_POLL_INTERVAL_MS));
+		}
+	}
 }
 
 /** Start the llama.cpp embedding server on port 1235. */
@@ -312,213 +410,6 @@ async function startEmbedServer(): Promise<boolean> {
 	return false;
 }
 
-/** Start the llama.cpp chat server on the first available port (1234). */
-async function startChatServer(): Promise<boolean> {
-	try {
-		const res = await fetch(`http://127.0.0.1:${LOCAL_CHAT_PORT_START}/`);
-		if (res.ok) {
-			console.error(
-				`[chat] Server already running on :${LOCAL_CHAT_PORT_START}`,
-			);
-			scheduleChatShutdown();
-			return true;
-		}
-	} catch {}
-
-	if (!fs.existsSync(CHAT_MODEL_PATH)) {
-		console.error(`[chat] Chat model not found at ${CHAT_MODEL_PATH}`);
-		return false;
-	}
-
-	const state = getState();
-
-	const proc = spawn(
-		LLAMA_SERVER_BINARY,
-		[
-			"--port",
-			String(LOCAL_CHAT_PORT_START),
-			"--host",
-			"127.0.0.1",
-			"--model",
-			CHAT_MODEL_PATH,
-			"--ctx-size",
-			"32768",
-			"--n-gpu-layers",
-			"99",
-		],
-		{
-			env: { ...process.env },
-			stdio: ["ignore", "pipe", "pipe"],
-		},
-	);
-
-	state.chatProcess = proc;
-	console.error(
-		`[chat] starting llama-server (${CHAT_MODEL_PATH}) on :${LOCAL_CHAT_PORT_START}...`,
-	);
-
-	proc.stdout?.on("data", (d) => process.stdout.write(`[chat] ${d}`));
-	proc.stderr?.on("data", (d) => process.stderr.write(`[chat] ${d}`));
-
-	proc.on("exit", (code) => {
-		console.error(`[chat] process exited with code ${code}`);
-		state.chatProcess = null;
-		// If the server crashed unexpectedly, unregister its providers
-		unregisterProviders(["chat"]);
-	});
-
-	for (let i = 0; i < 50; i++) {
-		await new Promise((r) => setTimeout(r, 100));
-		try {
-			const res = await fetch(`http://127.0.0.1:${LOCAL_CHAT_PORT_START}/`);
-			if (res.ok) {
-				console.error(`[chat] started successfully`);
-				scheduleChatShutdown();
-				return true;
-			}
-		} catch {}
-	}
-
-	console.error(`[chat] failed to start within 5 seconds`);
-	return false;
-}
-
-/** Schedule chat server shutdown after idle timeout. Call keepChatAlive() to cancel. */
-function scheduleChatShutdown() {
-	const state = getState();
-	if (state.chatIdleTimer) clearTimeout(state.chatIdleTimer);
-	state.chatIdleTimer = setTimeout(() => {
-		console.error(
-			`[chat] No local model selected within ${CHAT_IDLE_TIMEOUT / 1000}s — stopping chat server`,
-		);
-		stopChatServer();
-	}, CHAT_IDLE_TIMEOUT);
-}
-
-/** Call this when the user selects a local model — keeps the chat server alive. */
-export function keepChatAlive(): void {
-	const state = getState();
-	if (state.chatIdleTimer) {
-		clearTimeout(state.chatIdleTimer);
-		state.chatIdleTimer = null;
-		console.error("[chat] Local model selected — keeping chat server alive");
-	}
-}
-
-/** Stop the chat server and unregister its providers from pi. */
-function stopChatServer(): void {
-	const state = getState();
-	if (state.chatIdleTimer) {
-		clearTimeout(state.chatIdleTimer);
-		state.chatIdleTimer = null;
-	}
-	unregisterProviders(["chat"]);
-	if (state.chatProcess) {
-		state.chatProcess.kill("SIGTERM");
-		setTimeout(() => {
-			if (state.chatProcess) state.chatProcess.kill("SIGKILL");
-		}, 5000);
-		state.chatProcess = null;
-	}
-}
-
-/** Start the 4B context-rebuild model server on the 4B port (default 1236). */
-async function start4BModelServer(): Promise<boolean> {
-	const port = _4B_PORT;
-	try {
-		const res = await fetch(`http://127.0.0.1:${port}/`);
-		if (res.ok) {
-			console.error(`[4b] Server already running on :${port}`);
-			return true;
-		}
-	} catch {
-		// Not running — will start
-	}
-
-	const state = getState();
-
-	// Check if MTPLX model is cached locally
-	const mtplxCacheDir = path.join(
-		os.homedir(),
-		".mtplx",
-		"models",
-		_4B_MODEL_ID.replace("/", "--"),
-	);
-	if (!fs.existsSync(mtplxCacheDir)) {
-		console.error(`[4b] MTPLX model not cached at ${mtplxCacheDir}`);
-		console.error("[4b] Run: mtplx pull " + _4B_MODEL_ID);
-		return false;
-	}
-
-	const proc = spawn(
-		"mtplx",
-		[
-			"serve",
-			"--model",
-			_4B_MODEL_ID,
-			"--port",
-			String(port),
-			"--host",
-			"127.0.0.1",
-			"--reasoning",
-			"off",
-			"--default-temperature",
-			"0.1",
-			"--default-top-p",
-			"0.1",
-		],
-		{
-			env: { ...process.env },
-			stdio: ["ignore", "pipe", "pipe"],
-		},
-	);
-
-	state._4bProcess = proc;
-	console.error(`[4b] starting MTPLX server (${_4B_MODEL_ID}) on :${port}...`);
-
-	proc.stdout?.on("data", (d) => {
-		// Suppress verbose MTPLX stats footer noise
-		const line = d.toString();
-		if (!line.includes("---") && !line.includes("⚡")) {
-			process.stdout.write(`[4b] ${line}`);
-		}
-	});
-	proc.stderr?.on("data", (d) => process.stderr.write(`[4b] ${d}`));
-
-	proc.on("exit", (code) => {
-		console.error(`[4b] process exited with code ${code}`);
-		state._4bProcess = null;
-	});
-
-	for (let i = 0; i < 100; i++) {
-		await new Promise((r) => setTimeout(r, 100));
-		try {
-			const res = await fetch(`http://127.0.0.1:${port}/health`);
-			if (res.ok) {
-				console.error(`[4b] started successfully on :${port}`);
-				return true;
-			}
-		} catch {
-			// Still starting
-		}
-	}
-
-	console.error(`[4b] failed to start within 10 seconds`);
-	return false;
-}
-
-/** Stop the 4B context-rebuild model server and unregister its providers from pi. */
-function stop4BModelServer(): void {
-	const state = getState();
-	if (state._4bProcess) {
-		state._4bProcess.kill("SIGTERM");
-		setTimeout(() => {
-			if (state._4bProcess) state._4bProcess.kill("SIGKILL");
-		}, 5000);
-		state._4bProcess = null;
-	}
-}
-
 /** Stop the embedding server and unregister its providers from pi. */
 function stopEmbedServer(): void {
 	const state = getState();
@@ -533,18 +424,21 @@ function stopEmbedServer(): void {
 }
 
 /** Stop all managed processes and unregister all providers from pi. */
-export function stopIlo(): void {
+export async function stopIlo(): Promise<void> {
 	const state = getState();
 
-	stop4BModelServer();
-	stopChatServer();
-	stopEmbedServer();
+	// Set intentional shutdown flag so the exit handler doesn't auto-restart
+	state.intentionalShutdown = true;
+
+	if (state.embedProcess) {
+		stopEmbedServer();
+	}
 
 	if (state.iloProcess) {
-		state.iloProcess.kill("SIGTERM");
-		setTimeout(() => {
-			if (state.iloProcess) state.iloProcess.kill("SIGKILL");
-		}, 5000);
+		const proc = state.iloProcess;
+		// Don't null out state.iloProcess yet — the exit handler needs it
+		// to avoid calling startIlo().
+		await killProcessGracefully(proc, OLD_PROCESS_WAIT_MS);
 		state.iloProcess = null;
 	}
 }
@@ -588,7 +482,8 @@ export async function ensureIlo(): Promise<boolean> {
 
 /** Restart ILO. */
 export async function restartIlo(): Promise<boolean> {
-	stopIlo();
-	await new Promise((r) => setTimeout(r, 1000));
+	await stopIlo();
+	// A brief delay after graceful shutdown to let the OS release the flock
+	await new Promise((r) => setTimeout(r, 500));
 	return startIlo();
 }

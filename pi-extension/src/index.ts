@@ -15,7 +15,6 @@ import { registerInputHooks } from "./events/hooks";
 import {
 	startIlo,
 	stopIlo,
-	keepChatAlive,
 	setRegisteredProviders,
 	setUnregisterProviderCallback,
 } from "./lifecycle/manager";
@@ -81,16 +80,9 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 		);
 	}
 
-	// ── Watch for local model selection (keeps chat server alive) ──
-	pi.on("model_select", (event: any) => {
-		if (event.model?.provider?.startsWith("local-")) {
-			keepChatAlive();
-		}
-	});
-
 	// ── Cleanup on shutdown ───────────────────────────
-	process.on("SIGTERM", () => stopIlo());
-	pi.on("session_shutdown", () => stopIlo());
+	process.on("SIGTERM", () => stopIlo().catch(() => {}));
+	pi.on("session_shutdown", () => stopIlo().catch(() => {}));
 }
 
 /**
