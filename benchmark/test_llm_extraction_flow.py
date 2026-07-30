@@ -12,7 +12,7 @@ import urllib.request
 import os
 
 BASE_URL = "http://127.0.0.1:1234/v1/chat/completions"
-MODEL = "/Users/femi/models/qwen3.5-9b/Qwen_Qwen3.5-9B-Q4_K_M.gguf"
+MODEL = os.environ.get("MODEL_PATH", "/path/to/model.gguf")
 
 # ── The full context_rebuild tool with extraction ─────
 
@@ -104,7 +104,7 @@ FULL_TOOL = {
 
 def get_samples():
     session_dir = os.path.expanduser(
-        "~/.pi/agent/sessions/--Users-femi-Documents-ilo--/"
+        os.path.expanduser(os.environ.get("SESSION_DIR", "~/.pi/agent/sessions/example-session/"))
     )
     sessions = sorted([f for f in os.listdir(session_dir) if f.endswith(".jsonl")])
     samples = []

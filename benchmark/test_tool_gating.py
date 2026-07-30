@@ -20,7 +20,7 @@ import urllib.error
 # ── Config ─────────────────────────────────────────────
 
 BASE_URL = "http://127.0.0.1:1234/v1/chat/completions"
-MODEL_PATH = "/Users/femi/models/qwen3.5-9b/Qwen_Qwen3.5-9B-Q4_K_M.gguf"
+MODEL_PATH = os.environ.get("MODEL_PATH", "/path/to/model.gguf")
 
 CONTEXT_REBUILD_TOOL = {
     "type": "function",

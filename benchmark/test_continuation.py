@@ -9,7 +9,7 @@ import urllib.request
 SERVER = "http://127.0.0.1:1234/v1/chat/completions"
 
 # Load session
-session_dir = os.path.expanduser("~/.pi/agent/sessions/--Users-femi-Documents-ilo--/")
+session_dir = os.path.expanduser(os.environ.get("SESSION_DIR", "~/.pi/agent/sessions/example-session/"))
 files = sorted(glob.glob(os.path.join(session_dir, "*.jsonl")), key=os.path.getmtime)
 session_path = files[-1]
 with open(session_path) as f:

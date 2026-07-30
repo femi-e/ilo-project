@@ -10,7 +10,7 @@ import random
 from collections import Counter, defaultdict
 
 BASE_URL = "http://127.0.0.1:1234/v1/chat/completions"
-MODEL = "/Users/femi/models/qwen3.5-9b/Qwen_Qwen3.5-9B-Q4_K_M.gguf"
+MODEL = os.environ.get("MODEL_PATH", "/path/to/model.gguf")
 
 CATEGORIES = [
     "Depends",

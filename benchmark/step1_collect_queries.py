@@ -5,7 +5,7 @@ step1_collect_queries.py — Collect and clean user queries from 10+ session fil
 import json
 import os
 
-SESSION_DIR = os.path.expanduser("~/.pi/agent/sessions/--Users-femi-Documents-ilo--/")
+SESSION_DIR = os.path.expanduser(os.environ.get("SESSION_DIR", "~/.pi/agent/sessions/example-session/"))
 
 
 def extract_queries():

@@ -2,8 +2,12 @@
 
 import os
 
-# Paths
-SESSION_DIR = os.path.expanduser("~/.pi/agent/sessions/--Users-femi-Documents-ilo--/")
+# Paths (override with env vars: SESSION_DIR, MODEL_PATH)
+SESSION_DIR = os.environ.get(
+    "SESSION_DIR",
+    os.path.expanduser("~/.pi/agent/sessions/example-session/"),
+)
+MODEL_PATH = os.environ.get("MODEL_PATH", "/path/to/model.gguf")
 CUT_TURN = 10  # Split after this turn (pre: 1-10, post: 11+)
 RUNS_PER_TEST = 2  # Number of runs per test (reduced from 3 for speed)
 MAX_TOKENS = 800  # Max tokens for model response
