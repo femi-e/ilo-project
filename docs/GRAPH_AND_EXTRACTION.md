@@ -130,7 +130,7 @@ This enables the system to track the user's current goals across topic shifts an
 Memory chunks (entities + claims) are injected into the conversation history as custom `role: "memory"` messages.
 
 ```typescript
-// Internal representation (pi session):
+// Internal representation (session):
 {
   role: "memory",
   content: "## Memory Context\n- jwt_handler (0.95) — handles JWT tokens\n- user intends to fix refresh_token",
